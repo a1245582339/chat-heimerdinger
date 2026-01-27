@@ -86,26 +86,22 @@ export class ServiceManager {
       mkdirSync(LOG_DIR, { recursive: true });
     }
 
-    // Get project root from the CLI binary path (dist/cli.js -> project root)
+    // Get dist directory from the CLI binary path (dist/cli.js -> dist)
     // import.meta.url points to the bundled file location
     const cliPath = new URL(import.meta.url).pathname;
-    const projectRoot = dirname(dirname(cliPath)); // dist/cli.js -> dist -> project root
+    const distDir = dirname(cliPath); // dist/cli.js -> dist
 
-    const serverScript = join(projectRoot, 'src', 'services', 'daemon-entry.ts');
-    const tsxPath = join(projectRoot, 'node_modules', '.bin', 'tsx');
+    const daemonScript = join(distDir, 'daemon-entry.js');
 
     // Debug: check paths
-    consola.debug('Daemon paths:', { projectRoot, serverScript, tsxPath, LOG_FILE });
-    if (!existsSync(tsxPath)) {
-      throw new Error(`tsx not found at: ${tsxPath}`);
-    }
-    if (!existsSync(serverScript)) {
-      throw new Error(`Server script not found at: ${serverScript}`);
+    consola.debug('Daemon paths:', { distDir, daemonScript, LOG_FILE });
+    if (!existsSync(daemonScript)) {
+      throw new Error(`Daemon script not found at: ${daemonScript}`);
     }
 
-    // Start daemon process (use tsx/Node.js for @slack/bolt WebSocket compatibility)
+    // Start daemon process using node to run the bundled script
     // Use shell redirection for reliable log appending
-    const proc = spawn('sh', ['-c', `"${tsxPath}" "${serverScript}" >> "${LOG_FILE}" 2>&1`], {
+    const proc = spawn('sh', ['-c', `node "${daemonScript}" >> "${LOG_FILE}" 2>&1`], {
       cwd: process.cwd(),
       env: {
         ...process.env,
