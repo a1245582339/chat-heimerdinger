@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, unlinkSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { consola } from 'consola';
 import { LOG_DIR, LOG_FILE, PID_FILE } from '../constants';
@@ -104,14 +105,14 @@ export class ServiceManager {
 
     // Start daemon process (use tsx/Node.js for @slack/bolt WebSocket compatibility)
     // Use shell redirection for reliable log appending
-    const proc = Bun.spawn(['sh', '-c', `"${tsxPath}" "${serverScript}" >> "${LOG_FILE}" 2>&1`], {
+    const proc = spawn('sh', ['-c', `"${tsxPath}" "${serverScript}" >> "${LOG_FILE}" 2>&1`], {
       cwd: process.cwd(),
       env: {
         ...process.env,
         HEIMERDINGER_DAEMON: '1',
       },
-      stdout: 'ignore',
-      stderr: 'ignore',
+      stdio: 'ignore',
+      detached: true,
     });
 
     // Detach the process
@@ -170,7 +171,7 @@ export class ServiceManager {
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
-    await Bun.write(this.pidFile, pid.toString());
+    writeFileSync(this.pidFile, pid.toString());
   }
 
   /**
@@ -178,11 +179,10 @@ export class ServiceManager {
    */
   private async getPid(): Promise<number | null> {
     try {
-      const file = Bun.file(this.pidFile);
-      if (!(await file.exists())) {
+      if (!existsSync(this.pidFile)) {
         return null;
       }
-      const content = await file.text();
+      const content = readFileSync(this.pidFile, 'utf-8');
       const pid = Number.parseInt(content.trim(), 10);
       return Number.isNaN(pid) ? null : pid;
     } catch {

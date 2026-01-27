@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { Command } from 'commander';
 import { consola } from 'consola';
 import { LOG_FILE } from '../constants';
@@ -7,9 +9,7 @@ export const logsCommand = new Command('logs')
   .option('-f, --follow', 'Follow log output')
   .option('-n, --lines <number>', 'Number of lines to show', '50')
   .action(async (options) => {
-    const logFile = Bun.file(LOG_FILE);
-
-    if (!(await logFile.exists())) {
+    if (!existsSync(LOG_FILE)) {
       consola.warn('No log file found. Service may not have been started yet.');
       return;
     }
@@ -21,9 +21,8 @@ export const logsCommand = new Command('logs')
       consola.info('Press Ctrl+C to stop.\n');
 
       // Use tail -f for following
-      const proc = Bun.spawn(['tail', '-f', '-n', lines.toString(), LOG_FILE], {
-        stdout: 'inherit',
-        stderr: 'inherit',
+      const proc = spawn('tail', ['-f', '-n', lines.toString(), LOG_FILE], {
+        stdio: 'inherit',
       });
 
       // Handle Ctrl+C
@@ -32,10 +31,12 @@ export const logsCommand = new Command('logs')
         process.exit(0);
       });
 
-      await proc.exited;
+      await new Promise<void>((resolve) => {
+        proc.on('close', () => resolve());
+      });
     } else {
       // Read last N lines
-      const content = await logFile.text();
+      const content = readFileSync(LOG_FILE, 'utf-8');
       const allLines = content.split('\n').filter(Boolean);
       const lastLines = allLines.slice(-lines);
 

@@ -1,18 +1,25 @@
 {
-  "name": "heimerdinger",
+  "name": "chat-heimerdinger",
   "version": "0.1.0",
   "description": "Bridge IM tools (Slack/Lark) with Claude Code for vibe coding",
   "type": "module",
   "bin": {
     "hmdg": "./dist/cli.js"
   },
+  "main": "./dist/cli.js",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
-    "dev": "bun run src/cli.ts",
-    "build": "bun build ./src/cli.ts --outdir ./dist --target bun && bun build ./src/services/daemon-entry.ts --outdir ./dist --target bun && chmod +x ./dist/cli.js",
+    "dev": "tsx src/cli.ts",
+    "build": "bun build ./src/cli.ts --outdir ./dist --target node && bun build ./src/services/daemon-entry.ts --outdir ./dist --target node && sed -i '1s|#!/usr/bin/env bun|#!/usr/bin/env node|' ./dist/cli.js ./dist/daemon-entry.js && chmod +x ./dist/cli.js",
     "test": "bun test",
     "lint": "biome check .",
     "lint:fix": "biome check . --write",
-    "format": "biome format . --write"
+    "format": "biome format . --write",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@clack/prompts": "^0.9.1",
@@ -24,6 +31,7 @@
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/bun": "latest",
+    "@types/node": "^20.0.0",
     "tsx": "^4.21.0",
     "typescript": "^5.7.2"
   },
@@ -36,9 +44,17 @@
     "coding",
     "cli"
   ],
-  "author": "",
+  "author": "Pengpeng",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/a1245582339/chat-heimerdinger.git"
+  },
+  "homepage": "https://github.com/a1245582339/chat-heimerdinger#readme",
+  "bugs": {
+    "url": "https://github.com/a1245582339/chat-heimerdinger/issues"
+  },
   "engines": {
-    "bun": ">=1.0.0"
+    "node": ">=18.0.0"
   }
 }
