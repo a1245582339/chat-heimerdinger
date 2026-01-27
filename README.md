@@ -4,6 +4,40 @@
 
 Slack 与 Claude Code 的桥接工具，让你在 Slack 中直接与 Claude Code 进行对话式编程。
 
+## 前置准备
+
+在使用 Chat Heimerdinger 之前，请确保满足以下条件：
+
+### 1. Node.js 环境
+
+需要 Node.js 18.0.0 或更高版本：
+
+```bash
+node -v  # 确认版本 >= 18.0.0
+```
+
+### 2. 安装 Claude Code
+
+确保本机已安装并配置好 [Claude Code](https://docs.anthropic.com/en/docs/claude-code)：
+
+```bash
+# 安装 Claude Code
+npm install -g @anthropic-ai/claude-code
+
+# 验证安装
+claude --version
+```
+
+### 3. 创建 Slack Bot
+
+1. 访问 [Slack API](https://api.slack.com/apps) 创建新应用
+2. 选择 **From an app manifest**
+3. 导入本仓库的 [slack-bot-demo.json](https://github.com/a1245582339/chat-heimerdinger/blob/main/slack-bot-demo.json) 文件
+4. 安装应用到你的 Workspace
+5. **重要配置**：进入 **App Home** -> **Show Tabs**：
+   - 开启 **Messages Tab**
+   - 勾选 **"Allow users to send Slash commands and messages from the messages tab"**（必须勾选，否则无法私聊 Bot）
+
 ## 功能特性
 
 - **Slack 集成**：通过 Slack Bot 对话与 Claude Code 交互
@@ -25,13 +59,7 @@ npx chat-heimerdinger start
 
 ## 配置
 
-### 1. 创建 Slack App
-
-1. 访问 [Slack API](https://api.slack.com/apps) 创建新应用
-2. 选择 **From an app manifest**，粘贴 [slack-bot-demo.yaml](./slack-bot-demo.yaml) 的内容
-3. 安装应用到你的 Workspace
-
-### 2. 获取 Token
+### 1. 获取 Token
 
 | Token | 位置 |
 |-------|------|
@@ -39,7 +67,7 @@ npx chat-heimerdinger start
 | App Token (xapp-) | Basic Information > App-Level Tokens (需创建，scope 选 `connections:write`) |
 | Signing Secret | Basic Information > App Credentials |
 
-### 3. 初始化配置
+### 2. 初始化配置
 
 ```bash
 npx chat-heimerdinger init
@@ -170,11 +198,10 @@ pnpm link --global
 
 ## 注意事项
 
-1. **Claude Code 必须已安装**：确保本机已安装并配置好 [Claude Code](https://claude.ai/code)
-2. **项目必须已初始化**：需要先在项目目录中使用过 Claude Code，才能在 Slack 中选择该项目
-3. **Slack App 权限**：确保 Slack App 已添加所有必要的 OAuth Scopes
-4. **语音功能可选**：如不需要语音转文字，可跳过 whisper.cpp 安装
-5. **网络要求**：服务需要能访问 Slack API（Socket Mode 使用 WebSocket）
+1. **项目必须已初始化**：需要先在项目目录中使用过 Claude Code，才能在 Slack 中选择该项目
+2. **Slack App 权限**：确保 Slack App 已添加所有必要的 OAuth Scopes
+3. **语音功能可选**：如不需要语音转文字，可跳过 whisper.cpp 安装
+4. **网络要求**：服务需要能访问 Slack API（Socket Mode 使用 WebSocket）
 
 ## 开发
 
