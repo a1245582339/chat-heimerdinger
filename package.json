@@ -1,0 +1,44 @@
+{
+  "name": "heimerdinger",
+  "version": "0.1.0",
+  "description": "Bridge IM tools (Slack/Lark) with Claude Code for vibe coding",
+  "type": "module",
+  "bin": {
+    "hmdg": "./dist/cli.js"
+  },
+  "scripts": {
+    "dev": "bun run src/cli.ts",
+    "build": "bun build ./src/cli.ts --outdir ./dist --target bun && bun build ./src/services/daemon-entry.ts --outdir ./dist --target bun && chmod +x ./dist/cli.js",
+    "test": "bun test",
+    "lint": "biome check .",
+    "lint:fix": "biome check . --write",
+    "format": "biome format . --write"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.9.1",
+    "@slack/bolt": "^4.1.0",
+    "commander": "^13.0.0",
+    "conf": "^13.0.1",
+    "consola": "^3.2.3"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/bun": "latest",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.2"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "slack",
+    "lark",
+    "ai",
+    "coding",
+    "cli"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "bun": ">=1.0.0"
+  }
+}
