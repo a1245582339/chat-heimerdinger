@@ -19,7 +19,8 @@
     "lint": "biome check .",
     "lint:fix": "biome check . --write",
     "format": "biome format . --write",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "release": "npm version patch && npm publish --registry https://registry.npmjs.org --access public"
   },
   "dependencies": {
     "@clack/prompts": "^0.9.1",
