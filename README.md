@@ -273,11 +273,11 @@ pnpm link --global
 ## 开发
 
 ```bash
-# 开发模式（使用 tsx）
-pnpm dev
-
 # 构建
 pnpm build
+
+# link
+pnpm link
 
 # 格式化
 pnpm format
