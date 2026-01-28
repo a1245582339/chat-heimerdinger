@@ -81,6 +81,10 @@ export class ServiceManager {
    * Start service as daemon
    */
   async startDaemon(): Promise<void> {
+    // Kill any orphaned daemon processes before starting
+    // This handles cases like: pnpm dev left running, then hmdg start
+    await this.killOrphanedProcesses();
+
     // Ensure log directory exists
     if (!existsSync(LOG_DIR)) {
       mkdirSync(LOG_DIR, { recursive: true });
@@ -179,8 +183,10 @@ export class ServiceManager {
    */
   private async killOrphanedProcesses(): Promise<void> {
     try {
-      // Find and kill any processes running daemon-entry.js
-      execSync('pkill -f "node.*daemon-entry" 2>/dev/null || true', { encoding: 'utf-8' });
+      // Kill production daemon (node dist/daemon-entry.js)
+      execSync('pkill -f "node.*daemon-entry\\.js" 2>/dev/null || true', { encoding: 'utf-8' });
+      // Kill development daemon (tsx src/services/daemon-entry.ts)
+      execSync('pkill -f "tsx.*daemon-entry" 2>/dev/null || true', { encoding: 'utf-8' });
     } catch {
       // pkill failed or no processes found, ignore
     }

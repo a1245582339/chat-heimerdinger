@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,26 +8,72 @@ const WHISPER_MODEL_PATH = join(
   process.env.HOME || '/home/dev',
   '.local/share/whisper/ggml-small.bin'
 );
-const WHISPER_CLI = 'whisper-cli';
 
 export class WhisperService {
   private modelPath: string;
+  private whisperBinaryPath: string;
+  private ffmpegBinaryPath: string;
 
   constructor(modelPath: string = WHISPER_MODEL_PATH) {
     this.modelPath = modelPath;
+    consola.debug(`WhisperService init: HOME=${process.env.HOME}, modelPath=${this.modelPath}`);
+    this.whisperBinaryPath = this.findBinary('whisper-cli', [
+      '/usr/local/bin/whisper-cli',
+      '/usr/bin/whisper-cli',
+      `${process.env.HOME}/.local/bin/whisper-cli`,
+    ]);
+    this.ffmpegBinaryPath = this.findBinary('ffmpeg', [
+      '/usr/bin/ffmpeg',
+      '/usr/local/bin/ffmpeg',
+    ]);
+  }
+
+  /**
+   * Find a binary path
+   */
+  private findBinary(name: string, commonPaths: string[]): string {
+    try {
+      const path = execSync(`which ${name}`, { encoding: 'utf-8' }).trim();
+      if (path && existsSync(path)) {
+        consola.debug(`Found ${name} at:`, path);
+        return path;
+      }
+    } catch {
+      // which command failed
+    }
+
+    for (const p of commonPaths) {
+      if (existsSync(p)) {
+        consola.debug(`Found ${name} at:`, p);
+        return p;
+      }
+    }
+
+    consola.warn(`Could not find ${name} binary`);
+    return name;
   }
 
   /**
    * Check if Whisper is available
    */
   async isAvailable(): Promise<boolean> {
+    consola.debug(`Checking whisper availability: model=${this.modelPath}, binary=${this.whisperBinaryPath}`);
+
     if (!existsSync(this.modelPath)) {
       consola.warn(`Whisper model not found at ${this.modelPath}`);
       return false;
     }
 
+    // If we found an absolute path, check if it exists
+    if (this.whisperBinaryPath.startsWith('/')) {
+      const exists = existsSync(this.whisperBinaryPath);
+      consola.debug(`Whisper binary exists: ${exists}`);
+      return exists;
+    }
+
+    // Fallback: try to run it
     return new Promise((resolve) => {
-      const proc = spawn(WHISPER_CLI, ['-h'], { stdio: 'ignore' });
+      const proc = spawn(this.whisperBinaryPath, ['-h'], { stdio: 'ignore' });
       proc.on('close', (code) => resolve(code === 0));
       proc.on('error', () => resolve(false));
     });
@@ -87,7 +133,7 @@ export class WhisperService {
         outputFile,
       ];
 
-      const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      const proc = spawn(this.ffmpegBinaryPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
       let stderr = '';
 
       proc.stderr.on('data', (data: Buffer) => {
@@ -124,9 +170,9 @@ export class WhisperService {
         wavFile,
       ];
 
-      consola.debug(`Running whisper: ${WHISPER_CLI} ${args.join(' ')}`);
+      consola.debug(`Running whisper: ${this.whisperBinaryPath} ${args.join(' ')}`);
 
-      const proc = spawn(WHISPER_CLI, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      const proc = spawn(this.whisperBinaryPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
       let stdout = '';
       let stderr = '';
 
