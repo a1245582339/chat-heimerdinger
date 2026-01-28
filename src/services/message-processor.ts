@@ -1,7 +1,13 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { consola } from 'consola';
 import { SESSIONS_STATE_FILE } from '../constants';
-import type { IMAudioMessage, IMAdapter, IMMessage, MessageContext, PermissionDenial } from '../types';
+import type {
+  IMAdapter,
+  IMAudioMessage,
+  IMMessage,
+  MessageContext,
+  PermissionDenial,
+} from '../types';
 import { ClaudeCodeService } from './claude-code';
 import type { ConfigManager } from './config-manager';
 import { WhisperService } from './whisper';
@@ -38,7 +44,7 @@ export class MessageProcessor {
   // Track pending retries (retryId -> retry info)
   private pendingRetries: Map<string, PendingRetry> = new Map();
   // Track active executions per channel (for /stop command)
-  private activeExecutions: Map<string, { abort: () => void; messageTs: string }> = new Map();
+  private activeExecutions: Map<string, { abort: () => void; messageTs: string; aborted: boolean }> = new Map();
 
   constructor(configManager: ConfigManager) {
     this.configManager = configManager;
@@ -66,7 +72,13 @@ export class MessageProcessor {
           this.projectSessions.set(project, sessionId);
         }
 
-        consola.info(`Loaded ${this.userStates.size} channel states, ${this.projectSessions.size} project sessions`);
+        consola.info(
+          `Loaded ${this.userStates.size} channel states, ${this.projectSessions.size} project sessions`
+        );
+        // Log channel states for debugging
+        for (const [channel, channelState] of this.userStates) {
+          consola.debug('Loaded channel state:', 'channel=', channel, 'projectPath=', channelState.projectPath);
+        }
       }
     } catch (error) {
       consola.warn('Failed to load sessions state:', error);
@@ -92,7 +104,10 @@ export class MessageProcessor {
    * Get or resolve session ID for a project
    * Priority: 1. state.sessionId, 2. projectSessions map, 3. latest from Claude's sessions-index
    */
-  private async resolveSessionId(projectPath: string, stateSessionId?: string): Promise<string | undefined> {
+  private async resolveSessionId(
+    projectPath: string,
+    stateSessionId?: string
+  ): Promise<string | undefined> {
     // 1. Use explicit session from state
     if (stateSessionId) {
       return stateSessionId;
@@ -176,10 +191,7 @@ export class MessageProcessor {
     }
 
     // Send processing message (directly to channel, not thread)
-    const messageTs = await adapter.sendMessage(
-      context.channelId,
-      '🎤 正在转写语音...'
-    );
+    const messageTs = await adapter.sendMessage(context.channelId, '🎤 正在转写语音...');
 
     try {
       // Transcribe audio
@@ -260,6 +272,10 @@ export class MessageProcessor {
     // Resolve session ID
     const sessionId = await this.resolveSessionId(projectDir, state.sessionId);
 
+    // Set up execution tracking early so /stop can work during setup phase
+    const execution = { abort: () => {}, messageTs, aborted: false };
+    this.activeExecutions.set(context.channelId, execution);
+
     const allowedTools = this.configManager.get<string[]>('permissions.allowedTools') || [];
     const permissionMode = this.configManager.get<string>('claude.permissionMode') || 'acceptEdits';
 
@@ -276,9 +292,17 @@ export class MessageProcessor {
     const fileChanges: FileChange[] = [];
 
     const updateWithIndicator = async (content: string) => {
+      // Skip updates if execution was aborted
+      if (execution.aborted) return;
       const displayContent = isProcessing ? content + processingIndicator : content;
       await this.updateMessageThrottled(adapter, context.channelId, messageTs, displayContent);
     };
+
+    // Check if already aborted before starting Claude
+    if (execution.aborted) {
+      this.activeExecutions.delete(context.channelId);
+      return;
+    }
 
     try {
       const { promise, abort } = this.claudeService.execute(projectDir, prompt, {
@@ -311,11 +335,21 @@ export class MessageProcessor {
         },
       });
 
-      this.activeExecutions.set(context.channelId, { abort, messageTs });
+      // Update the abort function now that we have the real one
+      execution.abort = abort;
+
+      // If aborted while setting up, abort immediately
+      if (execution.aborted) {
+        abort();
+        this.activeExecutions.delete(context.channelId);
+        return;
+      }
+
       const result = await promise;
       this.activeExecutions.delete(context.channelId);
 
-      if (!result) return;
+      // If aborted, don't process further (message already updated by handleStopExecution)
+      if (execution.aborted || !result) return;
 
       isProcessing = false;
 
@@ -332,7 +366,11 @@ export class MessageProcessor {
         currentOutput += `\n\n_Cost: $${cost.toFixed(4)}_`;
       }
 
-      await adapter.updateMessage(context.channelId, messageTs, this.truncateForSlack(currentOutput));
+      await adapter.updateMessage(
+        context.channelId,
+        messageTs,
+        this.truncateForSlack(currentOutput)
+      );
 
       if (fileChanges.length > 0) {
         await this.showFileChanges(adapter, context.channelId, messageTs, fileChanges);
@@ -374,10 +412,7 @@ export class MessageProcessor {
         }
         this.saveState();
       }
-      await adapter.sendMessage(
-        context.channelId,
-        '✅ Next message will start a new session.'
-      );
+      await adapter.sendMessage(context.channelId, '✅ Next message will start a new session.');
     } else if (action === 'permission_approve') {
       // Handle permission approval
       await this.handlePermissionResponse(adapter, context, value, true);
@@ -411,17 +446,14 @@ export class MessageProcessor {
       return;
     }
 
+    // Mark as aborted first to prevent further message updates
+    execution.aborted = true;
     // Abort the execution
     execution.abort();
-    this.activeExecutions.delete(context.channelId);
 
     // Update the message to show it was stopped
     try {
-      await adapter.updateMessage(
-        context.channelId,
-        execution.messageTs,
-        '🛑 已停止'
-      );
+      await adapter.updateMessage(context.channelId, execution.messageTs, '🛑 已停止');
     } catch {
       // If update fails, send a new message
       await adapter.sendMessage(context.channelId, '🛑 已停止当前任务。');
@@ -548,7 +580,7 @@ Or just send a message to start coding with Claude!`;
     let message = `Selected project: \`${project.name}\`\n`;
 
     if (savedSessionId) {
-      const savedSession = sessions.find(s => s.sessionId === savedSessionId);
+      const savedSession = sessions.find((s) => s.sessionId === savedSessionId);
       if (savedSession) {
         message += `\n*Will resume session:* \`${savedSessionId.slice(0, 8)}...\`\n`;
         message += `_${savedSession.summary || savedSession.firstPrompt.slice(0, 50)}..._\n`;
@@ -582,7 +614,7 @@ Or just send a message to start coding with Claude!`;
     context: MessageContext,
     projectPath: string
   ): Promise<void> {
-    consola.debug('selectProjectAndExecute called with projectPath:', projectPath);
+    consola.debug('selectProjectAndExecute called:', 'channelId=', context.channelId, 'projectPath=', projectPath);
 
     // Update state with selected project
     let state = this.userStates.get(context.channelId);
@@ -601,10 +633,7 @@ Or just send a message to start coding with Claude!`;
     // Display the path directly (it's more useful than just the name)
     const displayPath = projectPath || '(unknown)';
 
-    await adapter.sendMessage(
-      context.channelId,
-      `✅ Selected project: \`${displayPath}\``
-    );
+    await adapter.sendMessage(context.channelId, `✅ Selected project: \`${displayPath}\``);
 
     // Execute pending prompt if exists
     const pendingPrompt = state.pendingPrompt;
@@ -617,10 +646,7 @@ Or just send a message to start coding with Claude!`;
   /**
    * Show project selection card (triggered by /project slash command)
    */
-  private async showProjectSelector(
-    adapter: IMAdapter,
-    context: MessageContext
-  ): Promise<void> {
+  private async showProjectSelector(adapter: IMAdapter, context: MessageContext): Promise<void> {
     const projects = await this.claudeService.getProjects();
 
     if (projects.length === 0) {
@@ -644,7 +670,10 @@ Or just send a message to start coding with Claude!`;
       );
     } else {
       // Fallback to text message
-      const projectList = projects.slice(0, 10).map((p) => `• \`${p.path}\``).join('\n');
+      const projectList = projects
+        .slice(0, 10)
+        .map((p) => `• \`${p.path}\``)
+        .join('\n');
       await adapter.sendMessage(
         context.channelId,
         `*Available Projects:*\n${projectList}\n\nUse \`/project <path>\` to select one.`
@@ -674,10 +703,7 @@ Or just send a message to start coding with Claude!`;
       this.projectSessions.delete(state.projectPath);
       this.userStates.set(context.channelId, state);
       this.saveState();
-      await adapter.sendMessage(
-        context.channelId,
-        '✅ Next message will start a new session.'
-      );
+      await adapter.sendMessage(context.channelId, '✅ Next message will start a new session.');
       return;
     }
 
@@ -713,13 +739,23 @@ Or just send a message to start coding with Claude!`;
 
     // Ensure state exists for this channel
     let state = this.userStates.get(context.channelId);
+    const stateExisted = !!state;
     if (!state) {
       state = {};
       this.userStates.set(context.channelId, state);
     }
 
-    const projectDir = state.projectPath || this.configManager.get<string>('projectDir');
-    consola.debug('projectDir:', projectDir, 'sessionId:', state.sessionId);
+    const configProjectDir = this.configManager.get<string>('projectDir');
+    const projectDir = state.projectPath || configProjectDir;
+    consola.debug(
+      'handlePrompt debug:',
+      'channelId=', context.channelId,
+      'stateExisted=', stateExisted,
+      'state.projectPath=', state.projectPath,
+      'configProjectDir=', configProjectDir,
+      'projectDir=', projectDir,
+      'sessionId=', state.sessionId
+    );
 
     if (!projectDir) {
       // No project selected - show project selection card if adapter supports it
@@ -749,7 +785,10 @@ Or just send a message to start coding with Claude!`;
         );
       } else {
         // Fallback to text message
-        const projectList = projects.slice(0, 10).map((p) => `• \`${p.name}\``).join('\n');
+        const projectList = projects
+          .slice(0, 10)
+          .map((p) => `• \`${p.name}\``)
+          .join('\n');
         await adapter.sendMessage(
           context.channelId,
           `Please select a project first:\n${projectList}\n\nUse \`/project <name>\` to select one.`
@@ -762,10 +801,11 @@ Or just send a message to start coding with Claude!`;
     const sessionId = await this.resolveSessionId(projectDir, state.sessionId);
 
     // Send initial response
-    const messageTs = await adapter.sendMessage(
-      context.channelId,
-      '🔄 Processing...'
-    );
+    const messageTs = await adapter.sendMessage(context.channelId, '🔄 Processing...');
+
+    // Set up execution tracking early so /stop can work during setup phase
+    const execution = { abort: () => {}, messageTs, aborted: false };
+    this.activeExecutions.set(context.channelId, execution);
 
     const allowedTools = this.configManager.get<string[]>('permissions.allowedTools') || [];
     const permissionMode = this.configManager.get<string>('claude.permissionMode') || 'acceptEdits';
@@ -785,9 +825,17 @@ Or just send a message to start coding with Claude!`;
 
     // Helper to update message with or without processing indicator
     const updateWithIndicator = async (content: string) => {
+      // Skip updates if execution was aborted
+      if (execution.aborted) return;
       const displayContent = isProcessing ? content + processingIndicator : content;
       await this.updateMessageThrottled(adapter, context.channelId, messageTs, displayContent);
     };
+
+    // Check if already aborted before starting Claude
+    if (execution.aborted) {
+      this.activeExecutions.delete(context.channelId);
+      return;
+    }
 
     try {
       consola.debug('Executing Claude with projectDir:', projectDir, 'prompt:', prompt);
@@ -837,18 +885,28 @@ Or just send a message to start coding with Claude!`;
           } else if (chunk.type === 'result') {
             // Mark processing as done
             isProcessing = false;
-            consola.debug('Result chunk received:', JSON.stringify({
-              session_id: chunk.session_id,
-              has_denials: !!chunk.permission_denials?.length,
-              denials_count: chunk.permission_denials?.length || 0,
-              cost: chunk.total_cost_usd || chunk.cost_usd,
-            }));
+            consola.debug(
+              'Result chunk received:',
+              JSON.stringify({
+                session_id: chunk.session_id,
+                has_denials: !!chunk.permission_denials?.length,
+                denials_count: chunk.permission_denials?.length || 0,
+                cost: chunk.total_cost_usd || chunk.cost_usd,
+              })
+            );
           }
         },
       });
 
-      // Track active execution for /stop command
-      this.activeExecutions.set(context.channelId, { abort, messageTs });
+      // Update the abort function now that we have the real one
+      execution.abort = abort;
+
+      // If aborted while setting up, abort immediately
+      if (execution.aborted) {
+        abort();
+        this.activeExecutions.delete(context.channelId);
+        return;
+      }
 
       // Wait for result
       const result = await promise;
@@ -856,8 +914,8 @@ Or just send a message to start coding with Claude!`;
       // Clean up active execution
       this.activeExecutions.delete(context.channelId);
 
-      // If aborted, don't process further
-      if (!result) {
+      // If aborted, don't process further (message already updated by handleStopExecution)
+      if (execution.aborted || !result) {
         return;
       }
 
@@ -869,7 +927,7 @@ Or just send a message to start coding with Claude!`;
         // Log result info
         consola.info('Claude result:', {
           session_id: result.session_id?.slice(0, 8),
-          has_denials: !!(result.permission_denials?.length),
+          has_denials: !!result.permission_denials?.length,
           denials_count: result.permission_denials?.length || 0,
           cost: result.total_cost_usd || result.cost_usd,
         });
@@ -886,11 +944,14 @@ Or just send a message to start coding with Claude!`;
         }
 
         // Check for permission denials from Claude result
-        const hasPermissionDenials = result.permission_denials && result.permission_denials.length > 0;
+        const hasPermissionDenials =
+          result.permission_denials && result.permission_denials.length > 0;
 
         if (hasPermissionDenials) {
-          const denials = result.permission_denials!
-            .map((d) => `• \`${d.tool_name}\`: ${JSON.stringify(d.tool_input).slice(0, 80)}...`)
+          const denials = result
+            .permission_denials!.map(
+              (d) => `• \`${d.tool_name}\`: ${JSON.stringify(d.tool_input).slice(0, 80)}...`
+            )
             .join('\n');
 
           currentOutput += `\n\n⚠️ *Some operations were blocked:*\n${denials}`;
@@ -906,7 +967,7 @@ Or just send a message to start coding with Claude!`;
         try {
           await adapter.updateMessage(context.channelId, messageTs, finalContent);
         } catch (updateError) {
-          consola.error('Failed to update final message:', updateError);
+          consola.warn('Failed to update final message, sending as new:', updateError);
           try {
             await adapter.sendMessage(context.channelId, finalContent);
           } catch {
@@ -916,7 +977,9 @@ Or just send a message to start coding with Claude!`;
 
         // If there were permission denials, offer retry button
         if (hasPermissionDenials) {
-          consola.info(`Sending retry card for ${result.permission_denials!.length} permission denials`);
+          consola.info(
+            `Sending retry card for ${result.permission_denials!.length} permission denials`
+          );
           try {
             await this.sendRetryWithPermissionsCard(
               adapter,
@@ -981,7 +1044,10 @@ Or just send a message to start coding with Claude!`;
       consola.info(`Showing ${fileChanges.length} file change(s) in thread`);
 
       // Group changes by file
-      const changesByFile = new Map<string, Array<{ tool: string; input: Record<string, unknown> }>>();
+      const changesByFile = new Map<
+        string,
+        Array<{ tool: string; input: Record<string, unknown> }>
+      >();
       for (const change of fileChanges) {
         const existing = changesByFile.get(change.file) || [];
         existing.push({ tool: change.tool, input: change.input });
@@ -998,13 +1064,22 @@ Or just send a message to start coding with Claude!`;
             const oldStr = (change.input.old_string as string) || '';
             const newStr = (change.input.new_string as string) || '';
             // Build unified diff format
-            const oldLines = oldStr.split('\n').map(l => `- ${l}`).join('\n');
-            const newLines = newStr.split('\n').map(l => `+ ${l}`).join('\n');
+            const oldLines = oldStr
+              .split('\n')
+              .map((l) => `- ${l}`)
+              .join('\n');
+            const newLines = newStr
+              .split('\n')
+              .map((l) => `+ ${l}`)
+              .join('\n');
             diffContent += `${oldLines}\n${newLines}\n`;
           } else if (change.tool === 'Write') {
             isNewFile = true;
             const content = (change.input.content as string) || '';
-            diffContent = content.split('\n').map(l => `+ ${l}`).join('\n');
+            diffContent = content
+              .split('\n')
+              .map((l) => `+ ${l}`)
+              .join('\n');
           }
         }
 
@@ -1022,14 +1097,18 @@ Or just send a message to start coding with Claude!`;
             });
             continue; // Success, move to next file
           } catch (uploadError) {
-            consola.warn('Snippet upload failed:', uploadError instanceof Error ? uploadError.message : uploadError);
+            consola.warn(
+              'Snippet upload failed:',
+              uploadError instanceof Error ? uploadError.message : uploadError
+            );
           }
         }
 
         // Fallback: send as regular message
-        const truncatedDiff = diffContent.length > 2900
-          ? diffContent.slice(0, 2900) + '\n... (truncated)'
-          : diffContent;
+        const truncatedDiff =
+          diffContent.length > 2900
+            ? `${diffContent.slice(0, 2900)}\n... (truncated)`
+            : diffContent;
         await adapter.sendMessage(
           channel,
           `📝 *${file}*\n\`\`\`diff\n${truncatedDiff}\n\`\`\``,
@@ -1120,11 +1199,7 @@ Or just send a message to start coding with Claude!`;
       ];
 
       // Send to main channel, not thread, so user can easily see and respond
-      await adapter.sendInteractiveMessage!(
-        context.channelId,
-        'Permission required',
-        blocks
-      );
+      await adapter.sendInteractiveMessage!(context.channelId, 'Permission required', blocks);
     } else {
       // Fallback message
       await adapter.sendMessage(
@@ -1171,7 +1246,14 @@ Or just send a message to start coding with Claude!`;
     const { prompt, projectDir, sessionId } = retryInfo;
 
     // Send initial response
-    const messageTs = await adapter.sendMessage(context.channelId, '🔄 Processing with elevated permissions...');
+    const messageTs = await adapter.sendMessage(
+      context.channelId,
+      '🔄 Processing with elevated permissions...'
+    );
+
+    // Set up execution tracking early so /stop can work during setup phase
+    const execution = { abort: () => {}, messageTs, aborted: false };
+    this.activeExecutions.set(context.channelId, execution);
 
     let currentOutput = '';
     let isProcessing = true;
@@ -1187,9 +1269,17 @@ Or just send a message to start coding with Claude!`;
     const fileChanges: FileChange[] = [];
 
     const updateWithIndicator = async (content: string) => {
+      // Skip updates if execution was aborted
+      if (execution.aborted) return;
       const displayContent = isProcessing ? content + processingIndicator : content;
       await this.updateMessageThrottled(adapter, context.channelId, messageTs, displayContent);
     };
+
+    // Check if already aborted before starting Claude
+    if (execution.aborted) {
+      this.activeExecutions.delete(context.channelId);
+      return;
+    }
 
     try {
       const { promise, abort } = this.claudeService.execute(projectDir, prompt, {
@@ -1227,8 +1317,15 @@ Or just send a message to start coding with Claude!`;
         },
       });
 
-      // Track active execution for /stop command
-      this.activeExecutions.set(context.channelId, { abort, messageTs });
+      // Update the abort function now that we have the real one
+      execution.abort = abort;
+
+      // If aborted while setting up, abort immediately
+      if (execution.aborted) {
+        abort();
+        this.activeExecutions.delete(context.channelId);
+        return;
+      }
 
       // Wait for result
       const result = await promise;
@@ -1236,8 +1333,8 @@ Or just send a message to start coding with Claude!`;
       // Clean up active execution
       this.activeExecutions.delete(context.channelId);
 
-      // If aborted, don't process further
-      if (!result) {
+      // If aborted, don't process further (message already updated by handleStopExecution)
+      if (execution.aborted || !result) {
         return;
       }
 
@@ -1260,7 +1357,11 @@ Or just send a message to start coding with Claude!`;
       }
 
       // Final update
-      await adapter.updateMessage(context.channelId, messageTs, this.truncateForSlack(currentOutput || 'Done.'));
+      await adapter.updateMessage(
+        context.channelId,
+        messageTs,
+        this.truncateForSlack(currentOutput || 'Done.')
+      );
 
       // Show file changes in thread
       if (fileChanges.length > 0) {
@@ -1278,23 +1379,118 @@ Or just send a message to start coding with Claude!`;
     }
   }
 
-  // Slack message character limit (leave room for truncation notice)
-  private static readonly SLACK_MAX_LENGTH = 39000;
+  // Slack message limit - use byte length for safety with CJK characters
+  // Official limit is 40000 characters, but CJK chars may count as multiple bytes
+  private static readonly SLACK_MAX_BYTES = 38000;
+
+  /**
+   * Convert Markdown to Slack mrkdwn format
+   * Markdown: **bold**, *italic*, [text](url), # header
+   * Slack:    *bold*,  _italic_, <url|text>,   *header*
+   */
+  private markdownToSlack(content: string): string {
+    try {
+      // Preserve code blocks first (```...```)
+      const codeBlocks: string[] = [];
+      let result = content.replace(/```[\s\S]*?```/g, (match) => {
+        codeBlocks.push(match);
+        return `<<<CODE_BLOCK_${codeBlocks.length - 1}>>>`;
+      });
+
+      // Preserve inline code (`...`)
+      const inlineCodes: string[] = [];
+      result = result.replace(/`[^`\n]+`/g, (match) => {
+        inlineCodes.push(match);
+        return `<<<INLINE_CODE_${inlineCodes.length - 1}>>>`;
+      });
+
+      // Convert headers (# ## ### etc.) to bold
+      result = result.replace(/^#{1,6}\s+(.+)$/gm, '*$1*');
+
+      // Convert bold: **text** or __text__ → *text* (non-greedy, single line)
+      result = result.replace(/\*\*([^*\n]+)\*\*/g, '*$1*');
+      result = result.replace(/__([^_\n]+)__/g, '*$1*');
+
+      // Convert links: [text](url) → <url|text>
+      result = result.replace(/\[([^\]\n]+)\]\(([^)\n]+)\)/g, '<$2|$1>');
+
+      // Convert Markdown tables to simple format (Slack doesn't support tables)
+      // Remove table separator lines (|---|---|)
+      result = result.replace(/^\|[-:\s|]+\|$/gm, '');
+      // Convert table rows to bullet points
+      result = result.replace(/^\|(.+)\|$/gm, (_, row) => {
+        const cells = row.split('|').map((c: string) => c.trim()).filter((c: string) => c);
+        if (cells.length >= 2) {
+          return `• ${cells[0]}: ${cells.slice(1).join(' | ')}`;
+        }
+        return `• ${cells.join(' ')}`;
+      });
+
+      // Restore inline codes
+      inlineCodes.forEach((code, i) => {
+        result = result.replace(`<<<INLINE_CODE_${i}>>>`, code);
+      });
+
+      // Restore code blocks
+      codeBlocks.forEach((block, i) => {
+        result = result.replace(`<<<CODE_BLOCK_${i}>>>`, block);
+      });
+
+      return result;
+    } catch (error) {
+      consola.error('Markdown conversion failed:', error);
+      return content; // Return original content if conversion fails
+    }
+  }
+
+  /**
+   * Get byte length of a string (for CJK characters)
+   */
+  private getByteLength(str: string): number {
+    return Buffer.byteLength(str, 'utf8');
+  }
+
+  /**
+   * Truncate string to fit within byte limit
+   */
+  private truncateToByteLimit(str: string, maxBytes: number): string {
+    if (this.getByteLength(str) <= maxBytes) {
+      return str;
+    }
+    // Binary search for the right length
+    let low = 0;
+    let high = str.length;
+    while (low < high) {
+      const mid = Math.floor((low + high + 1) / 2);
+      if (this.getByteLength(str.slice(0, mid)) <= maxBytes) {
+        low = mid;
+      } else {
+        high = mid - 1;
+      }
+    }
+    return str.slice(0, low);
+  }
 
   /**
    * Truncate message to fit Slack's limit
    */
   private truncateForSlack(content: string): string {
-    if (content.length <= MessageProcessor.SLACK_MAX_LENGTH) {
-      return content;
+    // Convert Markdown to Slack format first
+    const converted = this.markdownToSlack(content);
+    const byteLength = this.getByteLength(converted);
+
+    if (byteLength <= MessageProcessor.SLACK_MAX_BYTES) {
+      return converted;
     }
-    const truncated = content.slice(0, MessageProcessor.SLACK_MAX_LENGTH);
-    return truncated + '\n\n_⚠️ Message truncated (too long for Slack)_';
+
+    consola.warn(`Truncating message: ${byteLength} bytes (limit: ${MessageProcessor.SLACK_MAX_BYTES})`);
+    // Leave room for truncation notice (~100 bytes for CJK)
+    const truncated = this.truncateToByteLimit(converted, MessageProcessor.SLACK_MAX_BYTES - 100);
+    return `${truncated}\n\n_⚠️ Message truncated (too long for Slack)_`;
   }
 
-  // Throttle message updates to avoid rate limits
-  private lastUpdate = 0;
-  private updateQueue: string | null = null;
+  // Throttle message updates to avoid rate limits (per message)
+  private updateState = new Map<string, { lastUpdate: number; queue: string | null }>();
 
   private async updateMessageThrottled(
     adapter: IMAdapter,
@@ -1302,16 +1498,23 @@ Or just send a message to start coding with Claude!`;
     messageTs: string,
     content: string
   ): Promise<void> {
+    const key = `${channel}:${messageTs}`;
     const now = Date.now();
     const minInterval = 1000; // 1 second between updates
 
-    if (now - this.lastUpdate < minInterval) {
-      this.updateQueue = content;
+    let state = this.updateState.get(key);
+    if (!state) {
+      state = { lastUpdate: 0, queue: null };
+      this.updateState.set(key, state);
+    }
+
+    if (now - state.lastUpdate < minInterval) {
+      state.queue = content;
       return;
     }
 
-    this.lastUpdate = now;
-    this.updateQueue = null;
+    state.lastUpdate = now;
+    state.queue = null;
 
     try {
       await adapter.updateMessage(channel, messageTs, this.truncateForSlack(content));
@@ -1321,16 +1524,20 @@ Or just send a message to start coding with Claude!`;
     }
 
     // Process queued update after interval
-    if (this.updateQueue) {
-      const queuedContent = this.updateQueue;
+    if (state.queue) {
+      const queuedContent = state.queue;
       setTimeout(async () => {
         try {
           await adapter.updateMessage(channel, messageTs, this.truncateForSlack(queuedContent));
         } catch {
           // Ignore
         }
-        this.updateQueue = null;
+        // Clean up old state entries
+        this.updateState.delete(key);
       }, minInterval);
+    } else {
+      // Clean up if no queue
+      this.updateState.delete(key);
     }
   }
 }

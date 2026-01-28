@@ -12,7 +12,7 @@ import { HeimerdingerServer } from './server';
 // Configure consola for daemon mode (simple text output for file logging)
 if (process.env.HEIMERDINGER_DAEMON === '1') {
   // Use basic reporter that writes plain text
-  consola.options.fancy = false;
+  (consola.options as { fancy?: boolean }).fancy = false;
   consola.options.formatOptions = {
     colors: false,
     date: true,

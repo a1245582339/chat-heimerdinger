@@ -35,8 +35,20 @@ export interface SlackAdapterConfig {
   socketMode: boolean;
 }
 
+export interface FeishuAdapterConfig {
+  enabled: boolean;
+  appId: string;
+  appSecret: string;
+  encryptKey?: string;
+  verificationToken?: string;
+  connectionMode: 'websocket' | 'webhook';
+  webhookPort?: number;
+  domain?: 'feishu' | 'lark';
+}
+
 export interface AdapterConfigs {
   slack?: SlackAdapterConfig;
+  feishu?: FeishuAdapterConfig;
   [key: string]: unknown;
 }
 

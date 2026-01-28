@@ -75,11 +75,15 @@ export class WhisperService {
   private convertToWav(inputFile: string, outputFile: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const args = [
-        '-i', inputFile,
-        '-ar', '16000',     // 16kHz sample rate
-        '-ac', '1',         // Mono
-        '-c:a', 'pcm_s16le', // 16-bit PCM
-        '-y',               // Overwrite output
+        '-i',
+        inputFile,
+        '-ar',
+        '16000', // 16kHz sample rate
+        '-ac',
+        '1', // Mono
+        '-c:a',
+        'pcm_s16le', // 16-bit PCM
+        '-y', // Overwrite output
         outputFile,
       ];
 
@@ -110,11 +114,14 @@ export class WhisperService {
   private runWhisper(wavFile: string, language: string): Promise<string> {
     return new Promise((resolve, reject) => {
       const args = [
-        '-m', this.modelPath,
-        '-l', language,
-        '-nt',              // No timestamps
-        '-np',              // No prints except results
-        '-f', wavFile,
+        '-m',
+        this.modelPath,
+        '-l',
+        language,
+        '-nt', // No timestamps
+        '-np', // No prints except results
+        '-f',
+        wavFile,
       ];
 
       consola.debug(`Running whisper: ${WHISPER_CLI} ${args.join(' ')}`);

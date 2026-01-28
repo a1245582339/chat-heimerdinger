@@ -1,4 +1,18 @@
-import { App, type GenericMessageEvent } from '@slack/bolt';
+import { App } from '@slack/bolt';
+
+// Slack message event type (simplified from @slack/bolt)
+interface SlackMessageEvent {
+  type: string;
+  subtype?: string;
+  channel: string;
+  user?: string;
+  text?: string;
+  ts: string;
+  thread_ts?: string;
+  channel_type?: string;
+  bot_id?: string;
+  files?: Array<{ id: string; mimetype: string; url_private: string }>;
+}
 import { consola } from 'consola';
 import type {
   AudioMessageHandler,
@@ -38,6 +52,9 @@ export class SlackAdapter implements IMAdapter {
     this.setupEventHandlers();
   }
 
+  async init(): Promise<void> {
+    // No initialization needed for Slack adapter
+  }
 
   getConfigTemplate(): ConfigField[] {
     return [
@@ -121,7 +138,6 @@ export class SlackAdapter implements IMAdapter {
       channel,
       ts: messageTs,
       text: message,
-      mrkdwn: true,
     });
   }
 
@@ -140,10 +156,7 @@ export class SlackAdapter implements IMAdapter {
   private setupEventHandlers(): void {
     // Handle direct messages and mentions
     this.app.event('message', async ({ event, client }) => {
-      const msg = event as GenericMessageEvent & {
-        files?: Array<{ id: string; mimetype: string; url_private: string }>;
-        subtype?: string;
-      };
+      const msg = event as SlackMessageEvent;
 
       // Ignore bot messages (but allow file_share subtype for voice messages)
       if (msg.bot_id) return;
@@ -168,7 +181,9 @@ export class SlackAdapter implements IMAdapter {
       // Check for audio files (voice messages)
       if (msg.files && msg.files.length > 0) {
         for (const file of msg.files) {
-          consola.debug(`File in message: ${file.mimetype}, url: ${file.url_private?.slice(0, 50)}...`);
+          consola.debug(
+            `File in message: ${file.mimetype}, url: ${file.url_private?.slice(0, 50)}...`
+          );
           // Check if it's an audio file
           if (file.mimetype?.startsWith('audio/') || file.mimetype?.startsWith('video/')) {
             consola.info(`Received audio file: ${file.mimetype}`);
@@ -206,7 +221,7 @@ export class SlackAdapter implements IMAdapter {
 
       const context: MessageContext = {
         channelId: event.channel,
-        userId: event.user,
+        userId: event.user || '',
         threadTs: event.thread_ts || event.ts,
         messageTs: event.ts,
       };
@@ -229,13 +244,17 @@ export class SlackAdapter implements IMAdapter {
         value = (action.selected_option as { value: string }).value;
       }
 
-      consola.debug(`Action received: ${actionId} = ${value}`);
+      consola.debug(`Action received: ${actionId} = ${value}, channel=${body.channel?.id}`);
 
       const context: MessageContext = {
         channelId: body.channel?.id || '',
         userId: body.user.id,
         messageTs: 'message' in body ? body.message?.ts : undefined,
       };
+
+      if (!context.channelId) {
+        consola.warn('Action received without channel ID! body.channel:', JSON.stringify(body.channel));
+      }
 
       for (const handler of this.interactionHandlers) {
         await handler(actionId, value, context);
@@ -466,14 +485,21 @@ export class SlackAdapter implements IMAdapter {
     } = {}
   ): Promise<void> {
     try {
-      await this.app.client.files.uploadV2({
+      // Build upload args, only including optional fields if they have values
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const uploadArgs: Record<string, any> = {
         channel_id: channel,
         content,
         filename: options.filename || 'snippet.txt',
-        title: options.title,
-        thread_ts: options.threadTs,
-        initial_comment: options.initialComment,
-      });
+      };
+
+      if (options.title) uploadArgs.title = options.title;
+      if (options.threadTs) uploadArgs.thread_ts = options.threadTs;
+      if (options.initialComment) uploadArgs.initial_comment = options.initialComment;
+
+      await this.app.client.files.uploadV2(
+        uploadArgs as Parameters<typeof this.app.client.files.uploadV2>[0]
+      );
     } catch (error) {
       consola.error('Failed to upload snippet:', error);
     }

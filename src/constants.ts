@@ -51,5 +51,6 @@ export const DEFAULT_CONFIG: HeimerdingerConfig = {
   },
 };
 
-// Slack defaults
+// Adapter names
 export const SLACK_ADAPTER_NAME = 'slack';
+export const FEISHU_ADAPTER_NAME = 'feishu';

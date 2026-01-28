@@ -1,9 +1,10 @@
-import { createServer, type Server } from 'node:http';
 import { existsSync, unlinkSync, writeFileSync } from 'node:fs';
+import { type Server, createServer } from 'node:http';
 import { consola } from 'consola';
+import { FeishuAdapter } from '../adapters/feishu';
 import { SlackAdapter } from '../adapters/slack';
 import { PID_FILE } from '../constants';
-import type { IMAdapter } from '../types';
+import type { FeishuAdapterConfig, IMAdapter } from '../types';
 import type { ConfigManager } from './config-manager';
 import { MessageProcessor } from './message-processor';
 
@@ -59,6 +60,8 @@ export class HeimerdingerServer {
     // Initialize IM adapter
     if (activeAdapter === 'slack') {
       await this.initSlackAdapter();
+    } else if (activeAdapter === 'feishu') {
+      await this.initFeishuAdapter();
     } else if (activeAdapter) {
       consola.warn(`Unknown adapter: ${activeAdapter}`);
     } else {
@@ -109,15 +112,13 @@ export class HeimerdingerServer {
     try {
       consola.info('Initializing Slack adapter...');
 
-      this.adapter = new SlackAdapter({
+      const adapter = new SlackAdapter({
         botToken: slackConfig.botToken,
         appToken: slackConfig.appToken,
         signingSecret: slackConfig.signingSecret,
         socketMode: slackConfig.socketMode ?? true,
       });
-
-      // Capture adapter reference for callbacks
-      const adapter = this.adapter;
+      this.adapter = adapter;
 
       // Register message handler
       adapter.onMessage(async (message) => {
@@ -139,10 +140,60 @@ export class HeimerdingerServer {
         await this.messageProcessor.handleInteraction(action, value, context, adapter);
       });
 
-      await this.adapter.start();
+      await adapter.start();
       consola.success('Slack adapter started');
     } catch (error) {
       consola.error('Failed to initialize Slack adapter:', error);
+    }
+  }
+
+  private async initFeishuAdapter(): Promise<void> {
+    const feishuConfig = this.configManager.get<FeishuAdapterConfig>('adapters.feishu');
+
+    if (!feishuConfig) {
+      consola.warn('Feishu adapter not configured');
+      return;
+    }
+
+    try {
+      consola.info('Initializing Feishu adapter...');
+
+      const adapter = new FeishuAdapter({
+        enabled: feishuConfig.enabled,
+        appId: feishuConfig.appId,
+        appSecret: feishuConfig.appSecret,
+        encryptKey: feishuConfig.encryptKey,
+        verificationToken: feishuConfig.verificationToken,
+        connectionMode: feishuConfig.connectionMode ?? 'websocket',
+        webhookPort: feishuConfig.webhookPort,
+        domain: feishuConfig.domain ?? 'feishu',
+      });
+      this.adapter = adapter;
+
+      // Register message handler
+      adapter.onMessage(async (message) => {
+        consola.debug('Received message:', message.text);
+        await this.messageProcessor.handleMessage(message, adapter);
+      });
+
+      // Register audio message handler (for voice messages)
+      if (adapter.onAudioMessage) {
+        adapter.onAudioMessage(async (message) => {
+          consola.debug('Received audio message:', message.mimeType);
+          await this.messageProcessor.handleAudioMessage(message, adapter);
+        });
+      }
+
+      // Register interaction handler
+      adapter.onInteraction(async (action, value, context) => {
+        consola.debug('Received interaction:', action);
+        await this.messageProcessor.handleInteraction(action, value, context, adapter);
+      });
+
+      await adapter.start();
+      consola.success('Feishu adapter started');
+    } catch (error) {
+      consola.error('Failed to initialize Feishu adapter:', error);
     }
   }
 }

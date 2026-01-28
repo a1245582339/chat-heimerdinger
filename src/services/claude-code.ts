@@ -32,7 +32,9 @@ export class ClaudeCodeService {
    */
   async getProjects(): Promise<ClaudeProject[]> {
     try {
+      consola.debug('Looking for projects in:', this.projectsDir);
       if (!existsSync(this.projectsDir)) {
+        consola.warn('Claude projects directory does not exist:', this.projectsDir);
         return [];
       }
 
@@ -40,6 +42,8 @@ export class ClaudeCodeService {
       const projectDirs = readdirSync(this.projectsDir, { withFileTypes: true })
         .filter((dirent) => dirent.isDirectory())
         .map((dirent) => dirent.name);
+
+      consola.debug(`Found ${projectDirs.length} project directories`);
 
       // Decode folder names back to paths and get project info
       const projects: ClaudeProject[] = [];
@@ -49,6 +53,7 @@ export class ClaudeCodeService {
 
         // Check if path exists
         if (!existsSync(decodedPath)) {
+          consola.debug(`Skipping project (path not found): ${encodedPath} -> ${decodedPath}`);
           continue;
         }
 
@@ -78,13 +83,15 @@ export class ClaudeCodeService {
         });
       }
 
+      consola.debug(`Returning ${projects.length} valid projects`);
       // Sort by path length (deeper paths first) then alphabetically
       return projects.sort((a, b) => {
         const depthDiff = b.path.split('/').length - a.path.split('/').length;
         if (depthDiff !== 0) return depthDiff;
         return a.path.localeCompare(b.path);
       });
-    } catch {
+    } catch (error) {
+      consola.error('Error getting projects:', error);
       return [];
     }
   }

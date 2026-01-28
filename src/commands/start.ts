@@ -26,7 +26,7 @@ export const startCommand = new Command('start')
       process.exit(1);
     }
 
-    const adapterConfig = configManager.get(`adapters.${activeAdapter}`);
+    const adapterConfig = configManager.get<{ enabled?: boolean }>(`adapters.${activeAdapter}`);
     if (!adapterConfig?.enabled) {
       consola.error(`Adapter "${activeAdapter}" is not enabled or configured.`);
       process.exit(1);

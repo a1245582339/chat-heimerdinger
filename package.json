@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^0.9.1",
+    "@larksuiteoapi/node-sdk": "^1.56.1",
     "@slack/bolt": "^4.1.0",
     "commander": "^13.0.0",
     "conf": "^13.0.1",
