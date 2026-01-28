@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { consola } from 'consola';
@@ -127,12 +127,16 @@ export class ServiceManager {
    */
   async stop(): Promise<void> {
     const pid = await this.getPid();
-    if (!pid) return;
+    if (!pid) {
+      // No PID file, try to find and kill orphaned processes
+      await this.killOrphanedProcesses();
+      return;
+    }
 
     process.kill(pid, 'SIGTERM');
 
     // Wait for process to exit
-    const maxWait = 10000; // 10 seconds
+    const maxWait = 5000; // 5 seconds for graceful shutdown
     const interval = 100;
     let waited = 0;
 
@@ -141,11 +145,15 @@ export class ServiceManager {
       waited += interval;
 
       if (!(await this.isRunning())) {
+        // Also kill any orphaned processes
+        await this.killOrphanedProcesses();
         return;
       }
     }
 
-    throw new Error('Service did not stop gracefully. Use --force to kill.');
+    // Graceful shutdown failed, escalate to SIGKILL
+    consola.warn('Graceful shutdown timed out, forcing stop...');
+    await this.forceStop();
   }
 
   /**
@@ -153,10 +161,29 @@ export class ServiceManager {
    */
   async forceStop(): Promise<void> {
     const pid = await this.getPid();
-    if (!pid) return;
-
-    process.kill(pid, 'SIGKILL');
+    if (pid) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        // Process might already be dead
+      }
+    }
     await this.removePidFile();
+    // Also kill any orphaned processes
+    await this.killOrphanedProcesses();
+  }
+
+  /**
+   * Kill any orphaned daemon processes
+   * This handles cases where PID file is stale or out of sync
+   */
+  private async killOrphanedProcesses(): Promise<void> {
+    try {
+      // Find and kill any processes running daemon-entry.js
+      execSync('pkill -f "node.*daemon-entry" 2>/dev/null || true', { encoding: 'utf-8' });
+    } catch {
+      // pkill failed or no processes found, ignore
+    }
   }
 
   /**

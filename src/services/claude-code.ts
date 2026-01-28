@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { consola } from 'consola';
@@ -13,10 +13,47 @@ import type {
 export class ClaudeCodeService {
   private claudeConfigPath: string;
   private projectsDir: string;
+  private claudeBinaryPath: string;
 
   constructor(claudeConfigPath: string = CLAUDE_CONFIG_FILE) {
     this.claudeConfigPath = claudeConfigPath;
     this.projectsDir = CLAUDE_PROJECTS_DIR;
+    this.claudeBinaryPath = this.findClaudeBinary();
+  }
+
+  /**
+   * Find the claude binary path
+   */
+  private findClaudeBinary(): string {
+    try {
+      // Try to find claude using which command
+      const path = execSync('which claude', { encoding: 'utf-8' }).trim();
+      if (path && existsSync(path)) {
+        consola.debug('Found claude binary at:', path);
+        return path;
+      }
+    } catch {
+      // which command failed
+    }
+
+    // Common installation paths
+    const commonPaths = [
+      '/usr/local/bin/claude',
+      '/usr/bin/claude',
+      `${process.env.HOME}/.local/bin/claude`,
+      `${process.env.HOME}/.nvm/versions/node/${process.version}/bin/claude`,
+    ];
+
+    for (const p of commonPaths) {
+      if (existsSync(p)) {
+        consola.debug('Found claude binary at:', p);
+        return p;
+      }
+    }
+
+    // Fallback to 'claude' and hope PATH is set correctly
+    consola.warn('Could not find claude binary, using "claude" and relying on PATH');
+    return 'claude';
   }
 
   /**
@@ -165,7 +202,8 @@ export class ClaudeCodeService {
     args.push(prompt);
 
     consola.debug('Spawning claude with args:', args.join(' '));
-    const proc = spawn('claude', args, {
+    consola.debug('Using claude binary:', this.claudeBinaryPath);
+    const proc = spawn(this.claudeBinaryPath, args, {
       cwd: projectDir,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env },
@@ -271,7 +309,7 @@ export class ClaudeCodeService {
 
     // Try to find the valid path by checking which combinations exist
     const result = this.findValidPath('', parts, 0);
-    return result || '/' + path.replace(/-/g, '/'); // Fallback to simple replacement
+    return result || `/${path.replace(/-/g, '/')}`; // Fallback to simple replacement
   }
 
   /**
@@ -285,7 +323,7 @@ export class ClaudeCodeService {
     // Try adding parts with / separator
     for (let i = index; i < parts.length; i++) {
       const segment = parts.slice(index, i + 1).join('-');
-      const newPath = current + '/' + segment;
+      const newPath = `${current}/${segment}`;
 
       // If this is the last possible segment, check if path exists
       if (i === parts.length - 1) {
