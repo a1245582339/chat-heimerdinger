@@ -201,8 +201,10 @@ export class ClaudeCodeService {
     // Add prompt (must be last)
     args.push(prompt);
 
-    consola.debug('Spawning claude with args:', args.join(' '));
-    consola.debug('Using claude binary:', this.claudeBinaryPath);
+    // Log at info level and also to console to ensure it's captured
+    const spawnInfo = `Spawning claude: binary=${this.claudeBinaryPath}, cwd=${projectDir}`;
+    consola.info(spawnInfo);
+    console.log(spawnInfo);
     const proc = spawn(this.claudeBinaryPath, args, {
       cwd: projectDir,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -282,7 +284,10 @@ export class ClaudeCodeService {
       });
 
       proc.on('error', (err) => {
-        consola.error('Claude process error:', err);
+        // Use both consola and console.error to ensure error is captured
+        const errorMsg = `Claude process error: ${err.message}, binary path was: ${this.claudeBinaryPath}`;
+        consola.error(errorMsg);
+        console.error(errorMsg, err);
         reject(err);
       });
     });
