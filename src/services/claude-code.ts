@@ -26,23 +26,51 @@ export class ClaudeCodeService {
    */
   private findClaudeBinary(): string {
     try {
-      // Try to find claude using which command
-      const path = execSync('which claude', { encoding: 'utf-8' }).trim();
+      // Try to find claude using which command with explicit PATH
+      // This helps when running as daemon without full shell environment
+      const shellPaths = [
+        '/usr/local/bin',
+        '/usr/bin',
+        '/bin',
+        `${process.env.HOME}/.local/bin`,
+        ...(process.env.PATH?.split(':') || []),
+      ];
+      const path = execSync('which claude', {
+        encoding: 'utf-8',
+        env: { ...process.env, PATH: shellPaths.join(':') },
+      }).trim();
       if (path && existsSync(path)) {
         consola.debug('Found claude binary at:', path);
         return path;
       }
     } catch {
-      // which command failed
+      // which command failed, try fallback methods
     }
 
-    // Common installation paths
+    // Common installation paths (including nvm paths)
     const commonPaths = [
       '/usr/local/bin/claude',
       '/usr/bin/claude',
       `${process.env.HOME}/.local/bin/claude`,
+      // Check current node version from nvm
       `${process.env.HOME}/.nvm/versions/node/${process.version}/bin/claude`,
     ];
+
+    // Also check all nvm node versions if NVM_DIR exists
+    const nvmDir = process.env.NVM_DIR || `${process.env.HOME}/.nvm`;
+    if (existsSync(nvmDir)) {
+      try {
+        const nvmVersionsDir = join(nvmDir, 'versions', 'node');
+        if (existsSync(nvmVersionsDir)) {
+          const nodeVersions = readdirSync(nvmVersionsDir);
+          for (const version of nodeVersions) {
+            commonPaths.push(join(nvmVersionsDir, version, 'bin', 'claude'));
+          }
+        }
+      } catch {
+        // Ignore errors reading nvm directory
+      }
+    }
 
     for (const p of commonPaths) {
       if (existsSync(p)) {
