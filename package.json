@@ -1,6 +1,6 @@
 {
   "name": "chat-heimerdinger",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Bridge IM tools (Slack/Lark) with Claude Code for vibe coding",
   "type": "module",
   "bin": {
