@@ -275,6 +275,7 @@ export class MessageProcessor {
     // Set up execution tracking early so /stop can work during setup phase
     const execution = { abort: () => {}, messageTs, aborted: false };
     this.activeExecutions.set(context.channelId, execution);
+    consola.debug(`Execution started (audio): channelId=${context.channelId}, messageTs=${messageTs}`);
 
     const allowedTools = this.configManager.get<string[]>('permissions.allowedTools') || [];
     const permissionMode = this.configManager.get<string>('claude.permissionMode') || 'acceptEdits';
@@ -347,6 +348,7 @@ export class MessageProcessor {
 
       const result = await promise;
       this.activeExecutions.delete(context.channelId);
+      consola.debug(`Execution completed: channelId=${context.channelId}`);
 
       // If aborted, don't process further (message already updated by handleStopExecution)
       if (execution.aborted || !result) return;
@@ -377,6 +379,7 @@ export class MessageProcessor {
       }
     } catch (error) {
       this.activeExecutions.delete(context.channelId);
+      consola.debug(`Execution errored: channelId=${context.channelId}`);
       consola.error('Error executing Claude:', error);
       await adapter.updateMessage(
         context.channelId,
@@ -439,10 +442,19 @@ export class MessageProcessor {
    * Stop the current Claude execution for this channel
    */
   private async handleStopExecution(adapter: IMAdapter, context: MessageContext): Promise<void> {
+    consola.debug(`handleStopExecution called: channelId=${context.channelId}`);
+    consola.debug(`Active executions keys: [${Array.from(this.activeExecutions.keys()).join(', ')}]`);
+
     const execution = this.activeExecutions.get(context.channelId);
 
     if (!execution) {
-      await adapter.sendMessage(context.channelId, '没有正在运行的任务。');
+      // Provide more helpful debug info
+      const activeCount = this.activeExecutions.size;
+      const debugMsg = activeCount > 0
+        ? `当前有 ${activeCount} 个任务在运行，但不在此频道。`
+        : '没有正在运行的任务。';
+      consola.warn(`No execution found for channel ${context.channelId}. ${debugMsg}`);
+      await adapter.sendMessage(context.channelId, `${debugMsg}`);
       return;
     }
 
@@ -806,6 +818,7 @@ Or just send a message to start coding with Claude!`;
     // Set up execution tracking early so /stop can work during setup phase
     const execution = { abort: () => {}, messageTs, aborted: false };
     this.activeExecutions.set(context.channelId, execution);
+    consola.debug(`Execution started: channelId=${context.channelId}, messageTs=${messageTs}`);
 
     const allowedTools = this.configManager.get<string[]>('permissions.allowedTools') || [];
     const permissionMode = this.configManager.get<string>('claude.permissionMode') || 'acceptEdits';
@@ -1254,6 +1267,7 @@ Or just send a message to start coding with Claude!`;
     // Set up execution tracking early so /stop can work during setup phase
     const execution = { abort: () => {}, messageTs, aborted: false };
     this.activeExecutions.set(context.channelId, execution);
+    consola.debug(`Execution started (retry): channelId=${context.channelId}, messageTs=${messageTs}`);
 
     let currentOutput = '';
     let isProcessing = true;
@@ -1332,6 +1346,7 @@ Or just send a message to start coding with Claude!`;
 
       // Clean up active execution
       this.activeExecutions.delete(context.channelId);
+      consola.debug(`Execution completed (retry): channelId=${context.channelId}`);
 
       // If aborted, don't process further (message already updated by handleStopExecution)
       if (execution.aborted || !result) {
@@ -1370,6 +1385,7 @@ Or just send a message to start coding with Claude!`;
     } catch (error) {
       // Clean up active execution on error
       this.activeExecutions.delete(context.channelId);
+      consola.debug(`Execution errored (retry): channelId=${context.channelId}`);
       consola.error('Error in retry execution:', error);
       await adapter.updateMessage(
         context.channelId,
