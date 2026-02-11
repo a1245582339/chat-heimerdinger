@@ -49,6 +49,10 @@ export class SlackAdapter implements IMAdapter {
       appToken: config.appToken,
     });
 
+    this.app.error(async (error) => {
+      consola.error('Slack Bolt error:', error);
+    });
+
     this.setupEventHandlers();
   }
 
@@ -265,16 +269,20 @@ export class SlackAdapter implements IMAdapter {
     this.app.command('/project', async ({ command, ack }) => {
       await ack();
 
-      consola.debug(`Slash command /project from channel: ${command.channel_id}`);
+      consola.info(`Slash command /project from channel: ${command.channel_id}`);
 
-      const context: MessageContext = {
-        channelId: command.channel_id,
-        userId: command.user_id,
-      };
+      try {
+        const context: MessageContext = {
+          channelId: command.channel_id,
+          userId: command.user_id,
+        };
 
-      // Trigger show_project_selector interaction
-      for (const handler of this.interactionHandlers) {
-        await handler('show_project_selector', '', context);
+        // Trigger show_project_selector interaction
+        for (const handler of this.interactionHandlers) {
+          await handler('show_project_selector', '', context);
+        }
+      } catch (error) {
+        consola.error('Error handling /project command:', error);
       }
     });
 
@@ -282,16 +290,20 @@ export class SlackAdapter implements IMAdapter {
     this.app.command('/stop', async ({ command, ack }) => {
       await ack();
 
-      consola.debug(`Slash command /stop from channel: ${command.channel_id}`);
+      consola.info(`Slash command /stop from channel: ${command.channel_id}`);
 
-      const context: MessageContext = {
-        channelId: command.channel_id,
-        userId: command.user_id,
-      };
+      try {
+        const context: MessageContext = {
+          channelId: command.channel_id,
+          userId: command.user_id,
+        };
 
-      // Trigger stop_execution interaction
-      for (const handler of this.interactionHandlers) {
-        await handler('stop_execution', '', context);
+        // Trigger stop_execution interaction
+        for (const handler of this.interactionHandlers) {
+          await handler('stop_execution', '', context);
+        }
+      } catch (error) {
+        consola.error('Error handling /stop command:', error);
       }
     });
 
@@ -299,16 +311,20 @@ export class SlackAdapter implements IMAdapter {
     this.app.command('/clear', async ({ command, ack }) => {
       await ack();
 
-      consola.debug(`Slash command /clear from channel: ${command.channel_id}`);
+      consola.info(`Slash command /clear from channel: ${command.channel_id}`);
 
-      const context: MessageContext = {
-        channelId: command.channel_id,
-        userId: command.user_id,
-      };
+      try {
+        const context: MessageContext = {
+          channelId: command.channel_id,
+          userId: command.user_id,
+        };
 
-      // Trigger clear_session interaction
-      for (const handler of this.interactionHandlers) {
-        await handler('clear_session', '', context);
+        // Trigger clear_session interaction
+        for (const handler of this.interactionHandlers) {
+          await handler('clear_session', '', context);
+        }
+      } catch (error) {
+        consola.error('Error handling /clear command:', error);
       }
     });
   }
@@ -487,6 +503,7 @@ export class SlackAdapter implements IMAdapter {
     try {
       // Build upload args, only including optional fields if they have values
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // biome-ignore lint/suspicious/noExplicitAny: <explanation>
       const uploadArgs: Record<string, any> = {
         channel_id: channel,
         content,
