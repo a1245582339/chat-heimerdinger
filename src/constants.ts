@@ -1,10 +1,15 @@
+import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { HeimerdingerConfig } from './types';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'));
 
 export const APP_NAME = 'heimerdinger';
 export const CLI_NAME = 'hmdg';
-export const VERSION = '0.1.0';
+export const VERSION: string = pkg.version;
 
 // Paths
 export const HOME_DIR = homedir();
