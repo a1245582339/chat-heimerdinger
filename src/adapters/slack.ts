@@ -36,9 +36,13 @@ export class SlackAdapter implements IMAdapter {
 
   private app: App;
   private config: SlackAdapterConfig;
+  private botUserId: string | null = null;
   private messageHandlers: MessageHandler[] = [];
   private audioMessageHandlers: AudioMessageHandler[] = [];
   private interactionHandlers: InteractionHandler[] = [];
+  // Track recently processed message timestamps to prevent duplicate processing
+  // from both 'message' and 'app_mention' events
+  private processedMessages: Set<string> = new Set();
 
   constructor(config: SlackAdapterConfig) {
     this.config = config;
@@ -118,7 +122,17 @@ export class SlackAdapter implements IMAdapter {
   async start(): Promise<void> {
     consola.info('Slack: Starting Socket Mode...');
     await this.app.start();
-    consola.success('Slack adapter connected');
+
+    // Get bot's own user ID to filter self-messages
+    try {
+      const authResult = await this.app.client.auth.test();
+      this.botUserId = authResult.user_id || null;
+      consola.info(`Bot user ID: ${this.botUserId}`);
+    } catch (error) {
+      consola.warn('Failed to get bot user ID:', error);
+    }
+
+    consola.success('Slack adapter connected and ready');
   }
 
   async stop(): Promise<void> {
@@ -161,12 +175,25 @@ export class SlackAdapter implements IMAdapter {
     // Handle direct messages and mentions
     this.app.event('message', async ({ event, client }) => {
       const msg = event as SlackMessageEvent;
+      // Raw log to ensure visibility regardless of consola level
+      console.log(`[slack:message] ts=${msg.ts} user=${msg.user} channel=${msg.channel} channel_type=${msg.channel_type} subtype=${msg.subtype} bot_id=${msg.bot_id} text="${(msg.text || '').slice(0, 40)}"`);
 
-      // Ignore bot messages (but allow file_share subtype for voice messages)
-      if (msg.bot_id) return;
+      // Ignore bot messages (check bot_id, bot's own user ID, and edited messages)
+      if (msg.bot_id) {
+        consola.info(`[msg filter] skip: bot_id=${msg.bot_id}`);
+        return;
+      }
+      if (this.botUserId && msg.user === this.botUserId) {
+        consola.info(`[msg filter] skip: bot user ${msg.user}`);
+        return;
+      }
+      // biome-ignore lint/suspicious/noExplicitAny: Slack event types don't include 'edited'
+      if ((msg as any).edited) {
+        consola.info(`[msg filter] skip: edited msg from ${msg.user}`);
+        return;
+      }
 
-      // Log for debugging
-      consola.debug(`Message event: subtype=${msg.subtype}, has_files=${!!msg.files?.length}`);
+      consola.info(`[msg event] user=${msg.user} subtype=${msg.subtype} isDM=${msg.channel_type === 'im'} text="${(msg.text || '').slice(0, 50)}"`);
 
       // Ignore if not a mention or DM (unless it's a file share in DM)
       const isDM = msg.channel_type === 'im';
@@ -213,15 +240,45 @@ export class SlackAdapter implements IMAdapter {
       // Skip empty messages
       if (!text) return;
 
+      // Mark as processed to prevent duplicate handling from app_mention
+      this.processedMessages.add(msg.ts);
+      // Clean old entries (keep last 100)
+      if (this.processedMessages.size > 100) {
+        const entries = [...this.processedMessages];
+        this.processedMessages = new Set(entries.slice(-50));
+      }
+
       for (const handler of this.messageHandlers) {
         await handler({ text, context });
       }
     });
 
-    // Handle app mentions
+    // Handle app mentions (for @bot mentions in channels)
     this.app.event('app_mention', async ({ event }) => {
+      // Raw log to ensure visibility regardless of consola level
+      console.log(`[slack:app_mention] ts=${event.ts} user=${event.user} channel=${event.channel} text="${(event.text || '').slice(0, 40)}"`);
+      consola.info(`[app_mention] user=${event.user} channel=${event.channel} text="${(event.text || '').slice(0, 50)}"`);
+
+      // Skip if already processed by the 'message' handler
+      if (this.processedMessages.has(event.ts)) {
+        consola.info(`[app_mention] skip: already processed by message handler ts=${event.ts}`);
+        return;
+      }
+
+      // Ignore bot's own messages
+      if (this.botUserId && event.user === this.botUserId) {
+        consola.info(`[app_mention] skip: bot user ${event.user}`);
+        return;
+      }
+
       // Remove all @mentions from text
       const text = (event.text || '').replace(/<@[A-Z0-9]+>/gi, '').trim();
+
+      // Skip empty messages
+      if (!text) {
+        consola.info('[app_mention] skip: empty text after removing mentions');
+        return;
+      }
 
       const context: MessageContext = {
         channelId: event.channel,
@@ -229,6 +286,9 @@ export class SlackAdapter implements IMAdapter {
         threadTs: event.thread_ts || event.ts,
         messageTs: event.ts,
       };
+
+      // Mark as processed
+      this.processedMessages.add(event.ts);
 
       for (const handler of this.messageHandlers) {
         await handler({ text, context });

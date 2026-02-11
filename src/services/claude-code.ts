@@ -13,51 +13,68 @@ import type {
 export class ClaudeCodeService {
   private claudeConfigPath: string;
   private projectsDir: string;
-  private claudeBinaryPath: string;
+  private claudeBinaryPath: string | null = null;
 
   constructor(claudeConfigPath: string = CLAUDE_CONFIG_FILE) {
     this.claudeConfigPath = claudeConfigPath;
     this.projectsDir = CLAUDE_PROJECTS_DIR;
+  }
+
+  /**
+   * Get claude binary path, finding it on first use and caching the result
+   */
+  private getClaudeBinary(): string {
+    if (this.claudeBinaryPath) return this.claudeBinaryPath;
     this.claudeBinaryPath = this.findClaudeBinary();
+    return this.claudeBinaryPath;
   }
 
   /**
    * Find the claude binary path
    */
   private findClaudeBinary(): string {
+    // Build comprehensive PATH for searching
+    const home = process.env.HOME || '';
+    const extraPaths = [
+      process.env.NVM_BIN,
+      '/usr/local/bin',
+      '/usr/bin',
+      '/bin',
+      `${home}/.local/bin`,
+      `${home}/.local/share/pnpm`,
+      `${home}/.bun/bin`,
+    ].filter(Boolean) as string[];
+
+    const fullPath = [...extraPaths, ...(process.env.PATH?.split(':') || [])];
+    const dedupedPath = [...new Set(fullPath)].join(':');
+
     try {
-      // Try to find claude using which command with explicit PATH
-      // This helps when running as daemon without full shell environment
-      const shellPaths = [
-        '/usr/local/bin',
-        '/usr/bin',
-        '/bin',
-        `${process.env.HOME}/.local/bin`,
-        ...(process.env.PATH?.split(':') || []),
-      ];
+      // Try to find claude using which command with comprehensive PATH
       const path = execSync('which claude', {
         encoding: 'utf-8',
-        env: { ...process.env, PATH: shellPaths.join(':') },
+        env: { ...process.env, PATH: dedupedPath },
       }).trim();
       if (path && existsSync(path)) {
-        consola.debug('Found claude binary at:', path);
+        consola.info('Found claude binary at:', path);
         return path;
       }
     } catch {
-      // which command failed, try fallback methods
+      consola.warn('which claude failed, trying fallback paths...');
     }
 
     // Common installation paths (including nvm paths)
     const commonPaths = [
       '/usr/local/bin/claude',
       '/usr/bin/claude',
-      `${process.env.HOME}/.local/bin/claude`,
+      `${home}/.local/bin/claude`,
+      `${home}/.local/share/pnpm/claude`,
+      `${home}/.bun/bin/claude`,
       // Check current node version from nvm
-      `${process.env.HOME}/.nvm/versions/node/${process.version}/bin/claude`,
+      `${home}/.nvm/versions/node/${process.version}/bin/claude`,
     ];
 
     // Also check all nvm node versions if NVM_DIR exists
-    const nvmDir = process.env.NVM_DIR || `${process.env.HOME}/.nvm`;
+    const nvmDir = process.env.NVM_DIR || `${home}/.nvm`;
     if (existsSync(nvmDir)) {
       try {
         const nvmVersionsDir = join(nvmDir, 'versions', 'node');
@@ -74,13 +91,18 @@ export class ClaudeCodeService {
 
     for (const p of commonPaths) {
       if (existsSync(p)) {
-        consola.debug('Found claude binary at:', p);
+        consola.info('Found claude binary at fallback path:', p);
         return p;
       }
     }
 
     // Fallback to 'claude' and hope PATH is set correctly
-    consola.warn('Could not find claude binary, using "claude" and relying on PATH');
+    consola.error(
+      'Could not find claude binary! Searched PATH:',
+      dedupedPath,
+      'and common paths:',
+      commonPaths.join(', ')
+    );
     return 'claude';
   }
 
@@ -229,11 +251,16 @@ export class ClaudeCodeService {
     // Add prompt (must be last)
     args.push(prompt);
 
-    // Log at info level and also to console to ensure it's captured
-    const spawnInfo = `Spawning claude: binary=${this.claudeBinaryPath}, cwd=${projectDir}`;
-    consola.info(spawnInfo);
-    console.log(spawnInfo);
-    const proc = spawn(this.claudeBinaryPath, args, {
+    // Resolve binary path (lazy, cached after first call)
+    let binaryPath = this.getClaudeBinary();
+    // Verify binary still exists; re-find if stale
+    if (binaryPath !== 'claude' && !existsSync(binaryPath)) {
+      consola.warn(`Claude binary no longer exists at ${binaryPath}, re-finding...`);
+      this.claudeBinaryPath = null;
+      binaryPath = this.getClaudeBinary();
+    }
+    consola.info(`Spawning claude: binary=${binaryPath}, cwd=${projectDir}`);
+    const proc = spawn(binaryPath, args, {
       cwd: projectDir,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env },
@@ -313,7 +340,7 @@ export class ClaudeCodeService {
 
       proc.on('error', (err) => {
         // Use both consola and console.error to ensure error is captured
-        const errorMsg = `Claude process error: ${err.message}, binary path was: ${this.claudeBinaryPath}`;
+        const errorMsg = `Claude process error: ${err.message}, binary path was: ${binaryPath}`;
         consola.error(errorMsg);
         console.error(errorMsg, err);
         reject(err);

@@ -106,13 +106,17 @@ export class ServiceManager {
     // Start daemon process using node to run the bundled script
     // Use shell redirection for reliable log appending
     // Ensure PATH includes common binary locations and nvm paths
+    const home = process.env.HOME || '';
     const pathDirs = [
+      process.env.NVM_BIN,
       '/usr/local/bin',
       '/usr/bin',
       '/bin',
-      `${process.env.HOME}/.local/bin`,
+      `${home}/.local/bin`,
+      `${home}/.local/share/pnpm`,
+      `${home}/.bun/bin`,
       ...(process.env.PATH?.split(':') || []),
-    ];
+    ].filter(Boolean) as string[];
     const fullPath = [...new Set(pathDirs)].join(':'); // deduplicate
 
     const proc = spawn('sh', ['-c', `node "${daemonScript}" >> "${LOG_FILE}" 2>&1`], {

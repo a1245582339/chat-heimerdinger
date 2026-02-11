@@ -134,41 +134,69 @@ export class MessageProcessor {
     return undefined;
   }
 
+  getChannelIds(): string[] {
+    return [...this.userStates.keys()];
+  }
+
   async handleMessage(message: IMMessage, adapter: IMAdapter): Promise<void> {
     const { text, context } = message;
     const command = text.trim().toLowerCase();
 
-    consola.debug(`Received message: ${text}`);
+    consola.info(`[handleMessage] text="${text}" command="${command}" channel=${context.channelId}`);
 
     // Handle commands
     if (command === 'help' || command === '/help') {
+      consola.info('[handleMessage] -> help');
       await this.sendHelp(adapter, context);
       return;
     }
 
     if (command === '/projects' || command === 'projects') {
+      consola.info('[handleMessage] -> projects');
       await this.sendProjectList(adapter, context);
       return;
     }
 
     if (command === '/status' || command === 'status') {
+      consola.info('[handleMessage] -> status');
       await this.sendStatus(adapter, context);
       return;
     }
 
-    if (command.startsWith('/project ')) {
-      const projectName = text.slice(9).trim();
+    if (command === '/project' || command === 'project') {
+      consola.info('[handleMessage] -> showProjectSelector');
+      await this.showProjectSelector(adapter, context);
+      return;
+    }
+
+    if (command.startsWith('/project ') || command.startsWith('project ')) {
+      const projectName = command.startsWith('/') ? text.slice(9).trim() : text.slice(8).trim();
+      consola.info(`[handleMessage] -> selectProject: ${projectName}`);
       await this.selectProject(adapter, context, projectName);
       return;
     }
 
-    if (command.startsWith('/session ')) {
-      const sessionId = text.slice(9).trim();
+    if (command.startsWith('/session ') || command.startsWith('session ')) {
+      const sessionId = command.startsWith('/') ? text.slice(9).trim() : text.slice(8).trim();
+      consola.info(`[handleMessage] -> selectSession: ${sessionId}`);
       await this.selectSession(adapter, context, sessionId);
       return;
     }
 
+    if (command === '/stop' || command === 'stop') {
+      consola.info('[handleMessage] -> stop');
+      await this.handleStopExecution(adapter, context);
+      return;
+    }
+
+    if (command === '/clear' || command === 'clear') {
+      consola.info('[handleMessage] -> clear');
+      await this.handleClearSession(adapter, context);
+      return;
+    }
+
     // Default: treat as prompt for Claude
+    consola.info('[handleMessage] -> handlePrompt');
     await this.handlePrompt(adapter, context, text);
   }
 
@@ -508,11 +536,14 @@ export class MessageProcessor {
     const help = `*Heimerdinger - Claude Code Bridge*
 
 Available commands:
-• \`/projects\` - List available projects
-• \`/project <name>\` - Select a project
-• \`/session <id>\` - Resume a session
-• \`/status\` - Show current status
-• \`/help\` - Show this help
+• \`project\` - Select a project (interactive)
+• \`project <name>\` - Select a project by name
+• \`projects\` - List available projects
+• \`session <id>\` - Resume a session
+• \`stop\` - Stop current execution
+• \`clear\` - Clear session
+• \`status\` - Show current status
+• \`help\` - Show this help
 
 Or just send a message to start coding with Claude!`;
 

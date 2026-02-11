@@ -142,6 +142,16 @@ export class HeimerdingerServer {
 
       await adapter.start();
       consola.success('Slack adapter started');
+
+      // Notify known channels that the bot is online
+      const channelStates = this.messageProcessor.getChannelIds();
+      for (const channelId of channelStates) {
+        try {
+          await adapter.sendMessage(channelId, `🟢 Heimerdinger online (${new Date().toLocaleTimeString()})`);
+        } catch {
+          // Channel might not be accessible
+        }
+      }
     } catch (error) {
       consola.error('Failed to initialize Slack adapter:', error);
     }
