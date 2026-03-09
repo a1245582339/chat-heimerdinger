@@ -22,6 +22,12 @@ if (process.env.HEIMERDINGER_DAEMON === '1') {
 }
 
 async function main() {
+  // 启动时立即验证 claude binary
+  const { ClaudeCodeService } = await import('./claude-code');
+  const claudeCheck = new ClaudeCodeService();
+  const available = await claudeCheck.isAvailable();
+  console.log(`[startup] Claude available: ${available}, node: ${process.version}, PATH: ${(process.env.PATH || '').slice(0, 100)}...`);
+
   const configManager = new ConfigManager();
   const server = new HeimerdingerServer(configManager);
 

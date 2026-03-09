@@ -53,8 +53,29 @@ export class SlackAdapter implements IMAdapter {
       appToken: config.appToken,
     });
 
+    // 增加 Socket Mode ping/pong 超时时间，默认 5s 太短，内存紧张时容易断连
+    try {
+      // biome-ignore lint/suspicious/noExplicitAny: 访问内部 receiver.client 属性
+      const receiver = (this.app as any).receiver;
+      if (receiver?.client) {
+        receiver.client.clientPingTimeoutMS = 30000; // 30s (默认 5s)
+        receiver.client.serverPingTimeoutMS = 60000; // 60s (默认 30s)
+        consola.info('Socket Mode timeouts set: clientPing=30s, serverPing=60s');
+      }
+    } catch {
+      consola.warn('Failed to set Socket Mode timeouts');
+    }
+
     this.app.error(async (error) => {
       consola.error('Slack Bolt error:', error);
+    });
+
+    // 全局中间件：记录所有收到的事件，用于排查事件是否送达
+    this.app.use(async ({ body, next }) => {
+      // biome-ignore lint/suspicious/noExplicitAny: 需要访问 body 内部字段
+      const b = body as any;
+      console.log(`[slack:middleware] type=${b.type} event=${b.event?.type || 'N/A'} user=${b.event?.user || 'N/A'} channel=${b.event?.channel || 'N/A'}`);
+      await next();
     });
 
     this.setupEventHandlers();
@@ -174,9 +195,16 @@ export class SlackAdapter implements IMAdapter {
   private setupEventHandlers(): void {
     // Handle direct messages and mentions
     this.app.event('message', async ({ event, client }) => {
+      try {
       const msg = event as SlackMessageEvent;
+
+      // Filter out message_changed/message_deleted/etc. subtypes early (these are bot edits)
+      if (msg.subtype && msg.subtype !== 'file_share') {
+        return;
+      }
+
       // Raw log to ensure visibility regardless of consola level
-      console.log(`[slack:message] ts=${msg.ts} user=${msg.user} channel=${msg.channel} channel_type=${msg.channel_type} subtype=${msg.subtype} bot_id=${msg.bot_id} text="${(msg.text || '').slice(0, 40)}"`);
+      console.log(`[slack:message] ts=${msg.ts} user=${msg.user} channel=${msg.channel} channel_type=${msg.channel_type} text="${(msg.text || '').slice(0, 40)}"`);
 
       // Ignore bot messages (check bot_id, bot's own user ID, and edited messages)
       if (msg.bot_id) {
@@ -231,9 +259,6 @@ export class SlackAdapter implements IMAdapter {
         }
       }
 
-      // Skip other subtypes (like message_changed, message_deleted, etc.)
-      if (msg.subtype && msg.subtype !== 'file_share') return;
-
       // Remove all @mentions from text
       const text = (msg.text || '').replace(/<@[A-Z0-9]+>/gi, '').trim();
 
@@ -251,10 +276,15 @@ export class SlackAdapter implements IMAdapter {
       for (const handler of this.messageHandlers) {
         await handler({ text, context });
       }
+      } catch (err) {
+        console.error('[slack:message] UNCAUGHT ERROR:', err);
+        consola.error('[slack:message] handler error:', err);
+      }
     });
 
     // Handle app mentions (for @bot mentions in channels)
     this.app.event('app_mention', async ({ event }) => {
+      try {
       // Raw log to ensure visibility regardless of consola level
       console.log(`[slack:app_mention] ts=${event.ts} user=${event.user} channel=${event.channel} text="${(event.text || '').slice(0, 40)}"`);
       consola.info(`[app_mention] user=${event.user} channel=${event.channel} text="${(event.text || '').slice(0, 50)}"`);
@@ -292,6 +322,10 @@ export class SlackAdapter implements IMAdapter {
 
       for (const handler of this.messageHandlers) {
         await handler({ text, context });
+      }
+      } catch (err) {
+        console.error('[slack:app_mention] UNCAUGHT ERROR:', err);
+        consola.error('[slack:app_mention] handler error:', err);
       }
     });
 
