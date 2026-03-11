@@ -112,20 +112,19 @@ export class MessageProcessor {
     }
   }
 
-  private static readonly IMAGE_TEMP_DIR = '/tmp/heimerdinger-images';
-
   /**
-   * Save images to temp files and return the file paths
+   * Save images to temp files inside the project directory and return the file paths
    */
-  private saveImagesToTemp(images: IMImageAttachment[]): string[] {
+  private saveImagesToTemp(images: IMImageAttachment[], projectDir: string): string[] {
     const paths: string[] = [];
-    if (!existsSync(MessageProcessor.IMAGE_TEMP_DIR)) {
-      mkdirSync(MessageProcessor.IMAGE_TEMP_DIR, { recursive: true });
+    const imageDir = join(projectDir, '.claude', 'images');
+    if (!existsSync(imageDir)) {
+      mkdirSync(imageDir, { recursive: true });
     }
     for (const img of images) {
       const id = randomUUID().slice(0, 8);
       const filename = `${id}-${img.filename}`;
-      const filePath = join(MessageProcessor.IMAGE_TEMP_DIR, filename);
+      const filePath = join(imageDir, filename);
       writeFileSync(filePath, img.buffer);
       paths.push(filePath);
       consola.info(`Saved image to: ${filePath} (${img.buffer.length} bytes)`);
@@ -961,7 +960,7 @@ Or just send a message to start coding with Claude!`;
     let imagePaths: string[] = [];
     let effectivePrompt = prompt;
     if (images && images.length > 0) {
-      imagePaths = this.saveImagesToTemp(images);
+      imagePaths = this.saveImagesToTemp(images, projectDir);
       effectivePrompt = this.buildPromptWithImages(prompt, imagePaths);
       consola.info(`Prompt enriched with ${imagePaths.length} image(s)`);
     }
