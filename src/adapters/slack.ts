@@ -11,13 +11,14 @@ interface SlackMessageEvent {
   thread_ts?: string;
   channel_type?: string;
   bot_id?: string;
-  files?: Array<{ id: string; mimetype: string; url_private: string }>;
+  files?: Array<{ id: string; name?: string; mimetype: string; url_private: string }>;
 }
 import { consola } from 'consola';
 import type {
   AudioMessageHandler,
   ConfigField,
   IMAdapter,
+  IMImageAttachment,
   InteractionHandler,
   MessageContext,
   MessageHandler,
@@ -243,13 +244,14 @@ export class SlackAdapter implements IMAdapter {
           messageTs: msg.ts,
         };
 
-        // Check for audio files (voice messages)
+        // Process files: audio/video → transcription, images → attach to message
+        const images: IMImageAttachment[] = [];
         if (msg.files && msg.files.length > 0) {
           for (const file of msg.files) {
             consola.debug(
               `File in message: ${file.mimetype}, url: ${file.url_private?.slice(0, 50)}...`
             );
-            // Check if it's an audio file
+            // Audio/video files → transcription handler
             if (file.mimetype?.startsWith('audio/') || file.mimetype?.startsWith('video/')) {
               consola.info(`Received audio file: ${file.mimetype}`);
               try {
@@ -262,14 +264,26 @@ export class SlackAdapter implements IMAdapter {
               }
               return; // Don't process as text message
             }
+            // Image files → download and attach
+            if (file.mimetype?.startsWith('image/')) {
+              consola.info(`Received image file: ${file.mimetype}, name=${file.name}`);
+              try {
+                const imageBuffer = await this.downloadFile(file.url_private);
+                const ext = file.name?.split('.').pop() || 'png';
+                const filename = file.name || `image-${file.id}.${ext}`;
+                images.push({ buffer: imageBuffer, filename, mimetype: file.mimetype });
+              } catch (error) {
+                consola.error('Failed to download image file:', error);
+              }
+            }
           }
         }
 
         // Remove all @mentions from text
         const text = (msg.text || '').replace(/<@[A-Z0-9]+>/gi, '').trim();
 
-        // Skip empty messages
-        if (!text) return;
+        // Skip empty messages (but allow image-only messages)
+        if (!text && images.length === 0) return;
 
         // Mark as processed to prevent duplicate handling from app_mention
         this.processedMessages.add(msg.ts);
@@ -280,7 +294,7 @@ export class SlackAdapter implements IMAdapter {
         }
 
         for (const handler of this.messageHandlers) {
-          await handler({ text, context });
+          await handler({ text, context, images: images.length > 0 ? images : undefined });
         }
       } catch (err) {
         console.error('[slack:message] UNCAUGHT ERROR:', err);

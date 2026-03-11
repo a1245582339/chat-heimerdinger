@@ -1,9 +1,12 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { consola } from 'consola';
 import { SESSIONS_STATE_FILE } from '../constants';
 import type {
   IMAdapter,
   IMAudioMessage,
+  IMImageAttachment,
   IMMessage,
   MessageContext,
   PermissionDenial,
@@ -109,6 +112,50 @@ export class MessageProcessor {
     }
   }
 
+  private static readonly IMAGE_TEMP_DIR = '/tmp/heimerdinger-images';
+
+  /**
+   * Save images to temp files and return the file paths
+   */
+  private saveImagesToTemp(images: IMImageAttachment[]): string[] {
+    const paths: string[] = [];
+    if (!existsSync(MessageProcessor.IMAGE_TEMP_DIR)) {
+      mkdirSync(MessageProcessor.IMAGE_TEMP_DIR, { recursive: true });
+    }
+    for (const img of images) {
+      const id = randomUUID().slice(0, 8);
+      const filename = `${id}-${img.filename}`;
+      const filePath = join(MessageProcessor.IMAGE_TEMP_DIR, filename);
+      writeFileSync(filePath, img.buffer);
+      paths.push(filePath);
+      consola.info(`Saved image to: ${filePath} (${img.buffer.length} bytes)`);
+    }
+    return paths;
+  }
+
+  /**
+   * Clean up temp image files
+   */
+  private cleanupTempImages(paths: string[]): void {
+    for (const p of paths) {
+      try {
+        if (existsSync(p)) unlinkSync(p);
+      } catch {
+        // ignore cleanup errors
+      }
+    }
+  }
+
+  /**
+   * Build prompt with image references
+   */
+  private buildPromptWithImages(prompt: string, imagePaths: string[]): string {
+    if (imagePaths.length === 0) return prompt;
+    const imageRefs = imagePaths.map((p) => `  - ${p}`).join('\n');
+    const imageInstruction = `[The user attached ${imagePaths.length} image(s). Use the Read tool to view them:\n${imageRefs}\nPlease view the image(s) first before responding.]`;
+    return prompt ? `${imageInstruction}\n\n${prompt}` : imageInstruction;
+  }
+
   /**
    * Get or resolve session ID for a project
    * Priority: 1. state.sessionId, 2. projectSessions map, 3. latest from Claude's sessions-index
@@ -148,11 +195,11 @@ export class MessageProcessor {
   }
 
   async handleMessage(message: IMMessage, adapter: IMAdapter): Promise<void> {
-    const { text, context } = message;
+    const { text, context, images } = message;
     const command = text.trim().toLowerCase();
 
     consola.info(
-      `[handleMessage] text="${text}" command="${command}" channel=${context.channelId}`
+      `[handleMessage] text="${text}" command="${command}" channel=${context.channelId} images=${images?.length || 0}`
     );
 
     // Handle commands
@@ -208,7 +255,7 @@ export class MessageProcessor {
 
     // Default: treat as prompt for Claude
     consola.info('[handleMessage] -> handlePrompt');
-    await this.handlePrompt(adapter, context, text);
+    await this.handlePrompt(adapter, context, text, images);
   }
 
   /**
@@ -798,9 +845,10 @@ Or just send a message to start coding with Claude!`;
   private async handlePrompt(
     adapter: IMAdapter,
     context: MessageContext,
-    prompt: string
+    prompt: string,
+    images?: IMImageAttachment[]
   ): Promise<void> {
-    consola.debug('handlePrompt called with prompt:', prompt);
+    consola.debug('handlePrompt called with prompt:', prompt, 'images:', images?.length || 0);
 
     // Ensure state exists for this channel
     let state = this.userStates.get(context.channelId);
@@ -909,9 +957,18 @@ Or just send a message to start coding with Claude!`;
       return;
     }
 
+    // Save images to temp files and build enriched prompt
+    let imagePaths: string[] = [];
+    let effectivePrompt = prompt;
+    if (images && images.length > 0) {
+      imagePaths = this.saveImagesToTemp(images);
+      effectivePrompt = this.buildPromptWithImages(prompt, imagePaths);
+      consola.info(`Prompt enriched with ${imagePaths.length} image(s)`);
+    }
+
     try {
-      consola.debug('Executing Claude with projectDir:', projectDir, 'prompt:', prompt);
-      const { promise, abort } = this.claudeService.execute(projectDir, prompt, {
+      consola.debug('Executing Claude with projectDir:', projectDir, 'prompt:', effectivePrompt);
+      const { promise, abort } = this.claudeService.execute(projectDir, effectivePrompt, {
         sessionId,
         allowedTools,
         permissionMode: permissionMode as 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan',
@@ -1099,6 +1156,11 @@ Or just send a message to start coding with Claude!`;
         } catch {
           // Give up
         }
+      }
+    } finally {
+      // Clean up temp image files
+      if (imagePaths.length > 0) {
+        this.cleanupTempImages(imagePaths);
       }
     }
   }

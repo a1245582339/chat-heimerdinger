@@ -134,9 +134,16 @@ export interface MessageContext {
   messageTs?: string;
 }
 
+export interface IMImageAttachment {
+  buffer: Buffer;
+  filename: string;
+  mimetype: string;
+}
+
 export interface IMMessage {
   text: string;
   context: MessageContext;
+  images?: IMImageAttachment[];
 }
 
 export interface IMAudioMessage {
