@@ -147,7 +147,10 @@ export class HeimerdingerServer {
       const channelStates = this.messageProcessor.getChannelIds();
       for (const channelId of channelStates) {
         try {
-          await adapter.sendMessage(channelId, `🟢 Heimerdinger online (${new Date().toLocaleTimeString()})`);
+          await adapter.sendMessage(
+            channelId,
+            `🟢 Heimerdinger online (${new Date().toLocaleTimeString()})`
+          );
         } catch {
           // Channel might not be accessible
         }

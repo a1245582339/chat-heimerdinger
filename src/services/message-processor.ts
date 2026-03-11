@@ -44,7 +44,10 @@ export class MessageProcessor {
   // Track pending retries (retryId -> retry info)
   private pendingRetries: Map<string, PendingRetry> = new Map();
   // Track active executions per channel (for /stop command)
-  private activeExecutions: Map<string, { abort: () => void; messageTs: string; aborted: boolean }> = new Map();
+  private activeExecutions: Map<
+    string,
+    { abort: () => void; messageTs: string; aborted: boolean }
+  > = new Map();
 
   constructor(configManager: ConfigManager) {
     this.configManager = configManager;
@@ -77,7 +80,13 @@ export class MessageProcessor {
         );
         // Log channel states for debugging
         for (const [channel, channelState] of this.userStates) {
-          consola.debug('Loaded channel state:', 'channel=', channel, 'projectPath=', channelState.projectPath);
+          consola.debug(
+            'Loaded channel state:',
+            'channel=',
+            channel,
+            'projectPath=',
+            channelState.projectPath
+          );
         }
       }
     } catch (error) {
@@ -142,7 +151,9 @@ export class MessageProcessor {
     const { text, context } = message;
     const command = text.trim().toLowerCase();
 
-    consola.info(`[handleMessage] text="${text}" command="${command}" channel=${context.channelId}`);
+    consola.info(
+      `[handleMessage] text="${text}" command="${command}" channel=${context.channelId}`
+    );
 
     // Handle commands
     if (command === 'help' || command === '/help') {
@@ -303,7 +314,9 @@ export class MessageProcessor {
     // Set up execution tracking early so /stop can work during setup phase
     const execution = { abort: () => {}, messageTs, aborted: false };
     this.activeExecutions.set(context.channelId, execution);
-    consola.debug(`Execution started (audio): channelId=${context.channelId}, messageTs=${messageTs}`);
+    consola.debug(
+      `Execution started (audio): channelId=${context.channelId}, messageTs=${messageTs}`
+    );
 
     const allowedTools = this.configManager.get<string[]>('permissions.allowedTools') || [];
     const permissionMode = this.configManager.get<string>('claude.permissionMode') || 'acceptEdits';
@@ -471,16 +484,19 @@ export class MessageProcessor {
    */
   private async handleStopExecution(adapter: IMAdapter, context: MessageContext): Promise<void> {
     consola.debug(`handleStopExecution called: channelId=${context.channelId}`);
-    consola.debug(`Active executions keys: [${Array.from(this.activeExecutions.keys()).join(', ')}]`);
+    consola.debug(
+      `Active executions keys: [${Array.from(this.activeExecutions.keys()).join(', ')}]`
+    );
 
     const execution = this.activeExecutions.get(context.channelId);
 
     if (!execution) {
       // Provide more helpful debug info
       const activeCount = this.activeExecutions.size;
-      const debugMsg = activeCount > 0
-        ? `当前有 ${activeCount} 个任务在运行，但不在此频道。`
-        : '没有正在运行的任务。';
+      const debugMsg =
+        activeCount > 0
+          ? `当前有 ${activeCount} 个任务在运行，但不在此频道。`
+          : '没有正在运行的任务。';
       consola.warn(`No execution found for channel ${context.channelId}. ${debugMsg}`);
       await adapter.sendMessage(context.channelId, `${debugMsg}`);
       return;
@@ -657,7 +673,13 @@ Or just send a message to start coding with Claude!`;
     context: MessageContext,
     projectPath: string
   ): Promise<void> {
-    consola.debug('selectProjectAndExecute called:', 'channelId=', context.channelId, 'projectPath=', projectPath);
+    consola.debug(
+      'selectProjectAndExecute called:',
+      'channelId=',
+      context.channelId,
+      'projectPath=',
+      projectPath
+    );
 
     // Update state with selected project
     let state = this.userStates.get(context.channelId);
@@ -792,12 +814,18 @@ Or just send a message to start coding with Claude!`;
     const projectDir = state.projectPath || configProjectDir;
     consola.debug(
       'handlePrompt debug:',
-      'channelId=', context.channelId,
-      'stateExisted=', stateExisted,
-      'state.projectPath=', state.projectPath,
-      'configProjectDir=', configProjectDir,
-      'projectDir=', projectDir,
-      'sessionId=', state.sessionId
+      'channelId=',
+      context.channelId,
+      'stateExisted=',
+      stateExisted,
+      'state.projectPath=',
+      state.projectPath,
+      'configProjectDir=',
+      configProjectDir,
+      'projectDir=',
+      projectDir,
+      'sessionId=',
+      state.sessionId
     );
 
     if (!projectDir) {
@@ -1298,7 +1326,9 @@ Or just send a message to start coding with Claude!`;
     // Set up execution tracking early so /stop can work during setup phase
     const execution = { abort: () => {}, messageTs, aborted: false };
     this.activeExecutions.set(context.channelId, execution);
-    consola.debug(`Execution started (retry): channelId=${context.channelId}, messageTs=${messageTs}`);
+    consola.debug(
+      `Execution started (retry): channelId=${context.channelId}, messageTs=${messageTs}`
+    );
 
     let currentOutput = '';
     let isProcessing = true;
@@ -1466,7 +1496,10 @@ Or just send a message to start coding with Claude!`;
       result = result.replace(/^\|[-:\s|]+\|$/gm, '');
       // Convert table rows to bullet points
       result = result.replace(/^\|(.+)\|$/gm, (_, row) => {
-        const cells = row.split('|').map((c: string) => c.trim()).filter((c: string) => c);
+        const cells = row
+          .split('|')
+          .map((c: string) => c.trim())
+          .filter((c: string) => c);
         if (cells.length >= 2) {
           return `• ${cells[0]}: ${cells.slice(1).join(' | ')}`;
         }
@@ -1530,7 +1563,9 @@ Or just send a message to start coding with Claude!`;
       return converted;
     }
 
-    consola.warn(`Truncating message: ${byteLength} bytes (limit: ${MessageProcessor.SLACK_MAX_BYTES})`);
+    consola.warn(
+      `Truncating message: ${byteLength} bytes (limit: ${MessageProcessor.SLACK_MAX_BYTES})`
+    );
     // Leave room for truncation notice (~100 bytes for CJK)
     const truncated = this.truncateToByteLimit(converted, MessageProcessor.SLACK_MAX_BYTES - 100);
     return `${truncated}\n\n_⚠️ Message truncated (too long for Slack)_`;

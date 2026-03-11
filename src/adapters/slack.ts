@@ -74,7 +74,9 @@ export class SlackAdapter implements IMAdapter {
     this.app.use(async ({ body, next }) => {
       // biome-ignore lint/suspicious/noExplicitAny: 需要访问 body 内部字段
       const b = body as any;
-      console.log(`[slack:middleware] type=${b.type} event=${b.event?.type || 'N/A'} user=${b.event?.user || 'N/A'} channel=${b.event?.channel || 'N/A'}`);
+      console.log(
+        `[slack:middleware] type=${b.type} event=${b.event?.type || 'N/A'} user=${b.event?.user || 'N/A'} channel=${b.event?.channel || 'N/A'}`
+      );
       await next();
     });
 
@@ -196,86 +198,90 @@ export class SlackAdapter implements IMAdapter {
     // Handle direct messages and mentions
     this.app.event('message', async ({ event, client }) => {
       try {
-      const msg = event as SlackMessageEvent;
+        const msg = event as SlackMessageEvent;
 
-      // Filter out message_changed/message_deleted/etc. subtypes early (these are bot edits)
-      if (msg.subtype && msg.subtype !== 'file_share') {
-        return;
-      }
+        // Filter out message_changed/message_deleted/etc. subtypes early (these are bot edits)
+        if (msg.subtype && msg.subtype !== 'file_share') {
+          return;
+        }
 
-      // Raw log to ensure visibility regardless of consola level
-      console.log(`[slack:message] ts=${msg.ts} user=${msg.user} channel=${msg.channel} channel_type=${msg.channel_type} text="${(msg.text || '').slice(0, 40)}"`);
+        // Raw log to ensure visibility regardless of consola level
+        console.log(
+          `[slack:message] ts=${msg.ts} user=${msg.user} channel=${msg.channel} channel_type=${msg.channel_type} text="${(msg.text || '').slice(0, 40)}"`
+        );
 
-      // Ignore bot messages (check bot_id, bot's own user ID, and edited messages)
-      if (msg.bot_id) {
-        consola.info(`[msg filter] skip: bot_id=${msg.bot_id}`);
-        return;
-      }
-      if (this.botUserId && msg.user === this.botUserId) {
-        consola.info(`[msg filter] skip: bot user ${msg.user}`);
-        return;
-      }
-      // biome-ignore lint/suspicious/noExplicitAny: Slack event types don't include 'edited'
-      if ((msg as any).edited) {
-        consola.info(`[msg filter] skip: edited msg from ${msg.user}`);
-        return;
-      }
+        // Ignore bot messages (check bot_id, bot's own user ID, and edited messages)
+        if (msg.bot_id) {
+          consola.info(`[msg filter] skip: bot_id=${msg.bot_id}`);
+          return;
+        }
+        if (this.botUserId && msg.user === this.botUserId) {
+          consola.info(`[msg filter] skip: bot user ${msg.user}`);
+          return;
+        }
+        // biome-ignore lint/suspicious/noExplicitAny: Slack event types don't include 'edited'
+        if ((msg as any).edited) {
+          consola.info(`[msg filter] skip: edited msg from ${msg.user}`);
+          return;
+        }
 
-      consola.info(`[msg event] user=${msg.user} subtype=${msg.subtype} isDM=${msg.channel_type === 'im'} text="${(msg.text || '').slice(0, 50)}"`);
+        consola.info(
+          `[msg event] user=${msg.user} subtype=${msg.subtype} isDM=${msg.channel_type === 'im'} text="${(msg.text || '').slice(0, 50)}"`
+        );
 
-      // Ignore if not a mention or DM (unless it's a file share in DM)
-      const isDM = msg.channel_type === 'im';
-      const hasMention = /<@[A-Z0-9]+>/i.test(msg.text || '');
-      const isFileShare = msg.subtype === 'file_share';
+        // Ignore if not a mention or DM (unless it's a file share in DM)
+        const isDM = msg.channel_type === 'im';
+        const hasMention = /<@[A-Z0-9]+>/i.test(msg.text || '');
+        const isFileShare = msg.subtype === 'file_share';
 
-      if (!isDM && !hasMention && !isFileShare) return;
+        if (!isDM && !hasMention && !isFileShare) return;
 
-      const context: MessageContext = {
-        channelId: msg.channel,
-        userId: msg.user || '',
-        threadTs: msg.thread_ts || msg.ts,
-        messageTs: msg.ts,
-      };
+        const context: MessageContext = {
+          channelId: msg.channel,
+          userId: msg.user || '',
+          threadTs: msg.thread_ts || msg.ts,
+          messageTs: msg.ts,
+        };
 
-      // Check for audio files (voice messages)
-      if (msg.files && msg.files.length > 0) {
-        for (const file of msg.files) {
-          consola.debug(
-            `File in message: ${file.mimetype}, url: ${file.url_private?.slice(0, 50)}...`
-          );
-          // Check if it's an audio file
-          if (file.mimetype?.startsWith('audio/') || file.mimetype?.startsWith('video/')) {
-            consola.info(`Received audio file: ${file.mimetype}`);
-            try {
-              const audioBuffer = await this.downloadFile(file.url_private);
-              for (const handler of this.audioMessageHandlers) {
-                await handler({ audioBuffer, mimeType: file.mimetype, context });
+        // Check for audio files (voice messages)
+        if (msg.files && msg.files.length > 0) {
+          for (const file of msg.files) {
+            consola.debug(
+              `File in message: ${file.mimetype}, url: ${file.url_private?.slice(0, 50)}...`
+            );
+            // Check if it's an audio file
+            if (file.mimetype?.startsWith('audio/') || file.mimetype?.startsWith('video/')) {
+              consola.info(`Received audio file: ${file.mimetype}`);
+              try {
+                const audioBuffer = await this.downloadFile(file.url_private);
+                for (const handler of this.audioMessageHandlers) {
+                  await handler({ audioBuffer, mimeType: file.mimetype, context });
+                }
+              } catch (error) {
+                consola.error('Failed to download audio file:', error);
               }
-            } catch (error) {
-              consola.error('Failed to download audio file:', error);
+              return; // Don't process as text message
             }
-            return; // Don't process as text message
           }
         }
-      }
 
-      // Remove all @mentions from text
-      const text = (msg.text || '').replace(/<@[A-Z0-9]+>/gi, '').trim();
+        // Remove all @mentions from text
+        const text = (msg.text || '').replace(/<@[A-Z0-9]+>/gi, '').trim();
 
-      // Skip empty messages
-      if (!text) return;
+        // Skip empty messages
+        if (!text) return;
 
-      // Mark as processed to prevent duplicate handling from app_mention
-      this.processedMessages.add(msg.ts);
-      // Clean old entries (keep last 100)
-      if (this.processedMessages.size > 100) {
-        const entries = [...this.processedMessages];
-        this.processedMessages = new Set(entries.slice(-50));
-      }
+        // Mark as processed to prevent duplicate handling from app_mention
+        this.processedMessages.add(msg.ts);
+        // Clean old entries (keep last 100)
+        if (this.processedMessages.size > 100) {
+          const entries = [...this.processedMessages];
+          this.processedMessages = new Set(entries.slice(-50));
+        }
 
-      for (const handler of this.messageHandlers) {
-        await handler({ text, context });
-      }
+        for (const handler of this.messageHandlers) {
+          await handler({ text, context });
+        }
       } catch (err) {
         console.error('[slack:message] UNCAUGHT ERROR:', err);
         consola.error('[slack:message] handler error:', err);
@@ -285,44 +291,48 @@ export class SlackAdapter implements IMAdapter {
     // Handle app mentions (for @bot mentions in channels)
     this.app.event('app_mention', async ({ event }) => {
       try {
-      // Raw log to ensure visibility regardless of consola level
-      console.log(`[slack:app_mention] ts=${event.ts} user=${event.user} channel=${event.channel} text="${(event.text || '').slice(0, 40)}"`);
-      consola.info(`[app_mention] user=${event.user} channel=${event.channel} text="${(event.text || '').slice(0, 50)}"`);
+        // Raw log to ensure visibility regardless of consola level
+        console.log(
+          `[slack:app_mention] ts=${event.ts} user=${event.user} channel=${event.channel} text="${(event.text || '').slice(0, 40)}"`
+        );
+        consola.info(
+          `[app_mention] user=${event.user} channel=${event.channel} text="${(event.text || '').slice(0, 50)}"`
+        );
 
-      // Skip if already processed by the 'message' handler
-      if (this.processedMessages.has(event.ts)) {
-        consola.info(`[app_mention] skip: already processed by message handler ts=${event.ts}`);
-        return;
-      }
+        // Skip if already processed by the 'message' handler
+        if (this.processedMessages.has(event.ts)) {
+          consola.info(`[app_mention] skip: already processed by message handler ts=${event.ts}`);
+          return;
+        }
 
-      // Ignore bot's own messages
-      if (this.botUserId && event.user === this.botUserId) {
-        consola.info(`[app_mention] skip: bot user ${event.user}`);
-        return;
-      }
+        // Ignore bot's own messages
+        if (this.botUserId && event.user === this.botUserId) {
+          consola.info(`[app_mention] skip: bot user ${event.user}`);
+          return;
+        }
 
-      // Remove all @mentions from text
-      const text = (event.text || '').replace(/<@[A-Z0-9]+>/gi, '').trim();
+        // Remove all @mentions from text
+        const text = (event.text || '').replace(/<@[A-Z0-9]+>/gi, '').trim();
 
-      // Skip empty messages
-      if (!text) {
-        consola.info('[app_mention] skip: empty text after removing mentions');
-        return;
-      }
+        // Skip empty messages
+        if (!text) {
+          consola.info('[app_mention] skip: empty text after removing mentions');
+          return;
+        }
 
-      const context: MessageContext = {
-        channelId: event.channel,
-        userId: event.user || '',
-        threadTs: event.thread_ts || event.ts,
-        messageTs: event.ts,
-      };
+        const context: MessageContext = {
+          channelId: event.channel,
+          userId: event.user || '',
+          threadTs: event.thread_ts || event.ts,
+          messageTs: event.ts,
+        };
 
-      // Mark as processed
-      this.processedMessages.add(event.ts);
+        // Mark as processed
+        this.processedMessages.add(event.ts);
 
-      for (const handler of this.messageHandlers) {
-        await handler({ text, context });
-      }
+        for (const handler of this.messageHandlers) {
+          await handler({ text, context });
+        }
       } catch (err) {
         console.error('[slack:app_mention] UNCAUGHT ERROR:', err);
         consola.error('[slack:app_mention] handler error:', err);
@@ -351,7 +361,10 @@ export class SlackAdapter implements IMAdapter {
       };
 
       if (!context.channelId) {
-        consola.warn('Action received without channel ID! body.channel:', JSON.stringify(body.channel));
+        consola.warn(
+          'Action received without channel ID! body.channel:',
+          JSON.stringify(body.channel)
+        );
       }
 
       for (const handler of this.interactionHandlers) {

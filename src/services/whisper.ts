@@ -22,10 +22,7 @@ export class WhisperService {
       '/usr/bin/whisper-cli',
       `${process.env.HOME}/.local/bin/whisper-cli`,
     ]);
-    this.ffmpegBinaryPath = this.findBinary('ffmpeg', [
-      '/usr/bin/ffmpeg',
-      '/usr/local/bin/ffmpeg',
-    ]);
+    this.ffmpegBinaryPath = this.findBinary('ffmpeg', ['/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg']);
   }
 
   /**
@@ -57,7 +54,9 @@ export class WhisperService {
    * Check if Whisper is available
    */
   async isAvailable(): Promise<boolean> {
-    consola.debug(`Checking whisper availability: model=${this.modelPath}, binary=${this.whisperBinaryPath}`);
+    consola.debug(
+      `Checking whisper availability: model=${this.modelPath}, binary=${this.whisperBinaryPath}`
+    );
 
     if (!existsSync(this.modelPath)) {
       consola.warn(`Whisper model not found at ${this.modelPath}`);

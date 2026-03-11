@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { consola } from 'consola';
 import { LOG_DIR, LOG_FILE, PID_FILE } from '../constants';
 import type { ServiceStatus } from '../types';
+import { ClaudeCodeService } from './claude-code';
 import type { ConfigManager } from './config-manager';
 import { HeimerdingerServer } from './server';
 
@@ -103,8 +104,15 @@ export class ServiceManager {
       throw new Error(`Daemon script not found at: ${daemonScript}`);
     }
 
-    // Start daemon process using node to run the bundled script
-    // Use shell redirection for reliable log appending
+    // 在 CLI 进程中预解析 claude 绝对路径（CLI 拥有完整的用户环境，最可靠）
+    const claudeService = new ClaudeCodeService();
+    const claudeBinaryPath = claudeService.resolveClaudeBinaryPath();
+    if (claudeBinaryPath && claudeBinaryPath !== 'claude') {
+      consola.info(`Pre-resolved claude binary: ${claudeBinaryPath}`);
+    } else {
+      consola.warn('Could not pre-resolve claude binary path, daemon will try to find it');
+    }
+
     // Ensure PATH includes common binary locations and nvm paths
     const home = process.env.HOME || '';
     const pathDirs = [
@@ -119,12 +127,19 @@ export class ServiceManager {
     ].filter(Boolean) as string[];
     const fullPath = [...new Set(pathDirs)].join(':'); // deduplicate
 
+    // 构造干净的环境变量，移除所有可能触发 Claude "nested session" 检测的变量
+    const { CLAUDECODE, CLAUDE_CODE_ENTRYPOINT, CLAUDE_CODE_SESSION, ...daemonEnv } = process.env;
+
     const proc = spawn('sh', ['-c', `node "${daemonScript}" >> "${LOG_FILE}" 2>&1`], {
       cwd: process.cwd(),
       env: {
-        ...process.env,
+        ...daemonEnv,
         HEIMERDINGER_DAEMON: '1',
         PATH: fullPath,
+        // 将预解析的绝对路径传给 daemon，daemon 优先使用此路径
+        ...(claudeBinaryPath && claudeBinaryPath !== 'claude'
+          ? { CLAUDE_BINARY_PATH: claudeBinaryPath }
+          : {}),
       },
       stdio: 'ignore',
       detached: true,

@@ -26,7 +26,9 @@ async function main() {
   const { ClaudeCodeService } = await import('./claude-code');
   const claudeCheck = new ClaudeCodeService();
   const available = await claudeCheck.isAvailable();
-  console.log(`[startup] Claude available: ${available}, node: ${process.version}, PATH: ${(process.env.PATH || '').slice(0, 100)}...`);
+  console.log(
+    `[startup] Claude available: ${available}, node: ${process.version}, CLAUDE_BINARY_PATH: ${process.env.CLAUDE_BINARY_PATH || '(not set)'}, PATH: ${(process.env.PATH || '').slice(0, 100)}...`
+  );
 
   const configManager = new ConfigManager();
   const server = new HeimerdingerServer(configManager);

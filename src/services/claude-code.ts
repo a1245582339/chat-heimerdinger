@@ -33,6 +33,13 @@ export class ClaudeCodeService {
    * Find the claude binary path
    */
   private findClaudeBinary(): string {
+    // 0. 优先使用环境变量（由 startDaemon 预设，最可靠）
+    const envPath = process.env.CLAUDE_BINARY_PATH;
+    if (envPath && existsSync(envPath)) {
+      console.log(`[claude-code] Using CLAUDE_BINARY_PATH: ${envPath}`);
+      return envPath;
+    }
+
     const home = process.env.HOME || '';
 
     // 1. 直接检查已知路径（最快）
@@ -92,10 +99,15 @@ export class ClaudeCodeService {
     }
 
     // 3. 找不到
-    console.error(
-      `[claude-code] Claude binary NOT FOUND! Checked: ${knownPaths.join(', ')}`
-    );
+    console.error(`[claude-code] Claude binary NOT FOUND! Checked: ${knownPaths.join(', ')}`);
     return 'claude';
+  }
+
+  /**
+   * Resolve claude binary path (public, for startDaemon to call before spawning)
+   */
+  resolveClaudeBinaryPath(): string {
+    return this.findClaudeBinary();
   }
 
   /**
@@ -258,9 +270,7 @@ export class ClaudeCodeService {
     }
     // Final check: refuse to spawn if we only have the bare 'claude' fallback
     if (binaryPath === 'claude') {
-      throw new Error(
-        'Claude CLI 未找到。请确认已安装: npm install -g @anthropic-ai/claude-code'
-      );
+      throw new Error('Claude CLI 未找到。请确认已安装: npm install -g @anthropic-ai/claude-code');
     }
     if (!existsSync(binaryPath)) {
       throw new Error(`Claude binary not found at: ${binaryPath}`);
@@ -269,7 +279,7 @@ export class ClaudeCodeService {
     const home = process.env.HOME || '';
     const spawnPathDirs = [
       process.env.NVM_BIN,
-      `/home/dev/.nvm/versions/node/${process.version}/bin`,
+      `${home}/.nvm/versions/node/${process.version}/bin`,
       '/usr/local/bin',
       '/usr/bin',
       '/bin',
@@ -280,16 +290,21 @@ export class ClaudeCodeService {
     ].filter(Boolean) as string[];
     const spawnPath = [...new Set(spawnPathDirs)].join(':');
 
+    // Remove all env vars that trigger Claude "nested session" detection
+    const { CLAUDECODE, CLAUDE_CODE_ENTRYPOINT, CLAUDE_CODE_SESSION, ...cleanEnv } = process.env;
+    const spawnEnv = { ...cleanEnv, PATH: spawnPath };
+
     consola.info(`Spawning claude: binary=${binaryPath}, cwd=${projectDir}`);
     const proc = spawn(binaryPath, args, {
       cwd: projectDir,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, PATH: spawnPath },
+      env: spawnEnv,
       shell: false,
     });
 
     let lastResult: ClaudeStreamChunk | null = null;
     let buffer = '';
+    let stderrBuffer = '';
     let aborted = false;
 
     // Abort function to kill the process
@@ -330,8 +345,9 @@ export class ClaudeCodeService {
       });
 
       proc.stderr.on('data', (data: Buffer) => {
-        // Log stderr for debugging
-        consola.error('Claude stderr:', data.toString());
+        const text = data.toString();
+        stderrBuffer += text;
+        consola.error('Claude stderr:', text);
       });
 
       proc.on('close', (code) => {
@@ -355,7 +371,9 @@ export class ClaudeCodeService {
         } else if (code === 0 || lastResult) {
           resolve(lastResult);
         } else {
-          reject(new Error(`Claude process exited with code ${code}`));
+          const stderrFirst = stderrBuffer.trim().split('\n')[0] || '';
+          const detail = stderrFirst ? `: ${stderrFirst}` : '';
+          reject(new Error(`Claude process exited with code ${code}${detail}`));
         }
       });
 
