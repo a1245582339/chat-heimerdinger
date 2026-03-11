@@ -130,7 +130,8 @@ export class ServiceManager {
     // 构造干净的环境变量，移除所有可能触发 Claude "nested session" 检测的变量
     const { CLAUDECODE, CLAUDE_CODE_ENTRYPOINT, CLAUDE_CODE_SESSION, ...daemonEnv } = process.env;
 
-    const proc = spawn('sh', ['-c', `node "${daemonScript}" >> "${LOG_FILE}" 2>&1`], {
+    // stdbuf -oL 强制 stdout 行缓冲，确保日志实时写入文件
+    const proc = spawn('sh', ['-c', `stdbuf -oL node "${daemonScript}" >> "${LOG_FILE}" 2>&1`], {
       cwd: process.cwd(),
       env: {
         ...daemonEnv,

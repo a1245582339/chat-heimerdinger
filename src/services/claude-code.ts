@@ -1,6 +1,7 @@
 import { execSync, spawn } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { basename, join } from 'node:path';
+
 import { consola } from 'consola';
 import { CLAUDE_CONFIG_FILE, CLAUDE_PROJECTS_DIR } from '../constants';
 import type {
@@ -275,6 +276,17 @@ export class ClaudeCodeService {
     if (!existsSync(binaryPath)) {
       throw new Error(`Claude binary not found at: ${binaryPath}`);
     }
+
+    // 解析 symlink 得到真实脚本路径，绕过 shebang 解析
+    // claude binary 是 symlink → cli.js (#!/usr/bin/env node)
+    // 直接用 node 跑 cli.js，彻底避免 shebang ENOENT
+    let realScript: string;
+    try {
+      realScript = realpathSync(binaryPath);
+    } catch {
+      realScript = binaryPath;
+    }
+
     // Build comprehensive PATH for the spawned process
     const home = process.env.HOME || '';
     const spawnPathDirs = [
@@ -294,8 +306,13 @@ export class ClaudeCodeService {
     const { CLAUDECODE, CLAUDE_CODE_ENTRYPOINT, CLAUDE_CODE_SESSION, ...cleanEnv } = process.env;
     const spawnEnv = { ...cleanEnv, PATH: spawnPath };
 
-    consola.info(`Spawning claude: binary=${binaryPath}, cwd=${projectDir}`);
-    const proc = spawn(binaryPath, args, {
+    // 直接用当前 node 执行 claude 脚本，绕过 symlink + shebang 解析
+    // process.execPath = 当前运行的 node 绝对路径（永远可靠）
+
+    consola.info(
+      `Spawning claude: node=${process.execPath}, script=${realScript}, cwd=${projectDir}`
+    );
+    const proc = spawn(process.execPath, [realScript, ...args], {
       cwd: projectDir,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: spawnEnv,
@@ -378,8 +395,7 @@ export class ClaudeCodeService {
       });
 
       proc.on('error', (err) => {
-        // Use both consola and console.error to ensure error is captured
-        const errorMsg = `Claude process error: ${err.message}, binary=${binaryPath}, cwd=${projectDir}, binaryExists=${existsSync(binaryPath)}, cwdExists=${existsSync(projectDir)}`;
+        const errorMsg = `Claude process error: ${err.message}, node=${process.execPath}, script=${realScript}, cwd=${projectDir}, nodeExists=${existsSync(process.execPath)}, scriptExists=${existsSync(realScript)}, cwdExists=${existsSync(projectDir)}`;
         consola.error(errorMsg);
         console.error(errorMsg, err);
         reject(err);
