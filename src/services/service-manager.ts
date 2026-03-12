@@ -210,17 +210,25 @@ export class ServiceManager {
 
   /**
    * Kill any orphaned daemon processes
-   * This handles cases where PID file is stale or out of sync
+   * This handles cases where PID file is stale or out of sync.
+   * Uses SIGKILL to ensure immediate termination — stale processes holding
+   * Slack Socket Mode connections must die before we open new ones.
    */
   private async killOrphanedProcesses(): Promise<void> {
     try {
-      // Kill production daemon (node dist/daemon-entry.js)
-      execSync('pkill -f "node.*daemon-entry\\.js" 2>/dev/null || true', { encoding: 'utf-8' });
-      // Kill development daemon (tsx src/services/daemon-entry.ts)
-      execSync('pkill -f "tsx.*daemon-entry" 2>/dev/null || true', { encoding: 'utf-8' });
+      // SIGKILL (-9) to guarantee termination — graceful shutdown isn't needed for orphans
+      execSync('pkill -9 -f "node.*daemon-entry\\.js" 2>/dev/null || true', {
+        encoding: 'utf-8',
+      });
+      execSync('pkill -9 -f "tsx.*daemon-entry" 2>/dev/null || true', { encoding: 'utf-8' });
+      execSync('pkill -9 -f "stdbuf.*daemon-entry" 2>/dev/null || true', { encoding: 'utf-8' });
     } catch {
       // pkill failed or no processes found, ignore
     }
+
+    // Wait for Slack to detect dead connections before starting new ones.
+    // Socket Mode WebSocket keepalive takes a few seconds to time out.
+    await new Promise((resolve) => setTimeout(resolve, 2000));
   }
 
   /**

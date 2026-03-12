@@ -1,4 +1,12 @@
+import { appendFileSync } from 'node:fs';
 import { App } from '@slack/bolt';
+
+// Direct-to-file debug log — bypasses all stdout buffering
+const debugLog = (msg: string) => {
+  try {
+    appendFileSync('/home/dev/.heimerdinger/logs/debug.log', `${new Date().toISOString()} ${msg}\n`);
+  } catch {}
+};
 
 // Slack message event type (simplified from @slack/bolt)
 interface SlackMessageEvent {
@@ -68,6 +76,7 @@ export class SlackAdapter implements IMAdapter {
     }
 
     this.app.error(async (error) => {
+      debugLog(`[bolt:error] ${error}`);
       consola.error('Slack Bolt error:', error);
     });
 
@@ -75,9 +84,9 @@ export class SlackAdapter implements IMAdapter {
     this.app.use(async ({ body, next }) => {
       // biome-ignore lint/suspicious/noExplicitAny: 需要访问 body 内部字段
       const b = body as any;
-      console.log(
-        `[slack:middleware] type=${b.type} event=${b.event?.type || 'N/A'} user=${b.event?.user || 'N/A'} channel=${b.event?.channel || 'N/A'}`
-      );
+      const logMsg = `[slack:middleware] type=${b.type} event=${b.event?.type || 'N/A'} user=${b.event?.user || 'N/A'} channel=${b.event?.channel || 'N/A'}`;
+      debugLog(logMsg);
+      console.log(logMsg);
       await next();
     });
 
@@ -198,6 +207,7 @@ export class SlackAdapter implements IMAdapter {
   private setupEventHandlers(): void {
     // Handle direct messages and mentions
     this.app.event('message', async ({ event, client }) => {
+      debugLog(`[slack:event:message] raw=${JSON.stringify(event).slice(0, 200)}`);
       try {
         const msg = event as SlackMessageEvent;
 
